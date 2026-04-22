@@ -2,7 +2,7 @@ name: Build Executables
 
 on:
   push:
-    branches: [main, release/*]
+    branches: [master, main, release/*]
   release:
     types: [published]
   workflow_dispatch:
