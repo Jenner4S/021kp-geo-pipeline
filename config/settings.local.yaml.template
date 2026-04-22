@@ -1,0 +1,92 @@
+# 021kp.com GEO系统 - 本地安全凭证配置(⚠️ 严禁提交至Git)
+# ============================================================
+# 安全等级: CONFIDENTIAL | 适用规范: KMS密钥管理最佳实践
+# 使用说明: 
+#   1. 复制本文件为 settings.local.yaml (已加入.gitignore)
+#   2. 填入真实凭证后删除此模板中的明文值
+#   3. 生产环境建议通过环境变量或Vault注入
+
+# ==================== 微信公众号/小程序凭证 ====================
+wechat:
+  app_id: "wx_your_app_id_here"           # 从 mp.weixin.qq.com 获取
+  app_secret: "your_app_secret_here"       # ⚠️ 敏感信息,勿泄露
+  token: "your_wechat_token"               # 消息验证Token
+  encoding_aes_key: ""                     # 消息加密密钥(可选)
+  template_id: "msg_template_id_for_push"  # 模板消息ID
+  
+  # OAuth2授权回调(用于用户登录)
+  oauth_redirect_uri: "https://www.021kp.com/auth/wechat/callback"
+  scope: "snsapi_userinfo"
+
+# ==================== 抖音开放平台凭证 ====================
+douyin:
+  client_key: "aw_your_client_key_here"    # 从 open.douyin.com 获取
+  client_secret: "your_douyin_secret_here" # ⚠️ 敏感信息
+  
+  # HmacSHA256签名配置
+  sign_secret: "your_hmac_signing_key"
+  
+  # 内容发布API
+  publish_api_version: "v1"
+  default_category: "recruitment"          # 内容分类标识
+
+# ==================== 百度资源平台凭证 ====================
+baidu:
+  api_key: "your_baidu_api_key_here"       # 从 ziyuan.baidu.com 获取
+  site_token: "your_site_verification_token"
+  
+  # 站点地图推送
+  sitemap_push_url: "https://ziyuan.baidu.com/ping?sitemap="
+  sitemap_index_url: "https://www.021kp.com/sitemap.xml"
+  
+  # 百度统计(用于引用率追踪)
+  analytics_id: "your_baidu_analytics_id"
+  site_url: "https://www.021kp.com"
+
+# ==================== MySQL数据库连接(生产环境) ====================
+database:
+  host: "rm-xxx.mysql.rds.aliyuncs.com"    # 阿里云RDS地址
+  port: 3306
+  user: "021kp_geo_readonly"               # 建议使用只读账号
+  password: "your_db_password_here"        # ⚠️ 敏感信息
+  database: "021kp_production"
+  
+  # 连接池配置
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600                        # 连接回收时间(秒)
+  
+  # SSL加密(生产环境强制)
+  ssl_enabled: true
+  ssl_ca: "./config/ssl/ca.pem"
+
+# ==================== 企业微信告警配置 ====================
+alert:
+  webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_webhook_key"
+  
+  # 告警接收人
+  notify_users:
+    - "@all"                                # 默认通知所有人
+    
+  # 告警级别过滤
+  min_level: "WARNING"                      # WARNING/ERROR/CRITICAL
+
+# ==================== AI服务配置(可选) ====================
+ai_service:
+  provider: "openai"                        # openai/qwen/zhipu
+  api_key: "your_ai_api_key"                # ⚠️ 用于内容增强
+  model: "gpt-4-turbo"                      # 或 qwen-max
+  max_tokens: 2000
+  temperature: 0.3                          # 低温度确保稳定性
+
+# ==================== 文件存储(OSS/S3) ====================
+storage:
+  provider: "aliyun_oss"                    # aliyun_oss/aws_s3/local
+  endpoint: "oss-cn-shanghai.aliyuncs.com"
+  bucket_name: "021kp-geo-assets"
+  access_key_id: "your_oss_access_key"
+  access_key_secret: "your_oss_secret"      # ⚠️ 敏感信息
+  
+  # CDN加速域名
+  cdn_domain: "cdn.021kp.com"

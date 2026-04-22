@@ -1,0 +1,80 @@
+# 021kp.com GEO系统 - 本地安全凭证配置(⚠️ 严禁提交至Git)
+# ============================================================
+# 安全等级: CONFIDENTIAL | 适用规范: KMS密钥管理最佳实践
+# 生成时间: 2026-04-21 | 来源: settings.local.yaml.template
+#
+# ⚠️ 当前状态: 开发模式 (Phase 4 API分发未启用)
+#    要启用微信/抖音/百度推送, 需填入下方真实凭证
+#
+# 使用说明:
+#   1. 从各平台后台获取API密钥
+#   2. 替换下方的占位符
+#   3. 重启服务生效
+
+# ==================== 微信公众号/小程序凭证 ====================
+wechat:
+  app_id: ""           # 从 mp.weixin.qq.com 获取
+  app_secret: ""       # ⚠️ 敏感信息,勿泄露
+  token: ""
+  encoding_aes_key: ""
+  template_id: ""
+  oauth_redirect_uri: "https://www.021kp.com/auth/wechat/callback"
+  scope: "snsapi_userinfo"
+
+# ==================== 抖音开放平台凭证 ====================
+douyin:
+  client_key: ""       # 从 open.douyin.com 获取
+  client_secret: ""    # ⚠️ 敏感信息
+  sign_secret: ""
+  publish_api_version: "v1"
+  default_category: "recruitment"
+
+# ==================== 百度资源平台凭证 ====================
+baidu:
+  api_key: ""          # 从 ziyuan.baidu.com 获取
+  site_token: ""
+  sitemap_push_url: "https://ziyuan.baidu.com/ping?sitemap="
+  sitemap_index_url: "https://www.021kp.com/sitemap.xml"
+  analytics_id: ""
+  site_url: "https://www.021kp.com"
+
+# ==================== 数据库连接 (当前使用SQLite) ====================
+database:
+  host: "localhost"
+  port: 0              # SQLite模式不需要端口
+  user: ""
+  password: ""
+  database: "./data/geo_pipeline.db"
+  
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 3600
+  ssl_enabled: false
+  ssl_ca: ""
+
+# ==================== 企业微信告警配置 ====================
+alert:
+  webhook: ""          # 企业微信群机器人 Webhook URL
+  
+  notify_users:
+    - "@all"
+    
+  min_level: "WARNING"  # WARNING/ERROR/CRITICAL
+
+# ==================== AI服务配置(可选) ====================
+ai_service:
+  provider: ""         # openai/qwen/zhipu/留空则不启用
+  api_key: ""
+  model: "gpt-4-turbo"
+  max_tokens: 2000
+  temperature: 0.3
+
+# ==================== 文件存储 ====================
+storage:
+  provider: "local"     # aliyun_oss/aws_s3/local (默认本地)
+  endpoint: ""
+  bucket_name: ""
+  access_key_id: ""
+  access_key_secret: ""
+  cdn_domain: ""

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.spec
+
+# Data & Logs
+audit_logs/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+reports/
+logs/
+*.log
+
+# Env & Secrets
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Lock files (committed separately)
+uv.lock

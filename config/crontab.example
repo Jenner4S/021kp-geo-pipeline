@@ -1,0 +1,93 @@
+                                                                                                                                                                    # 松江快聘GEO系统 - 定时任务配置
+# ==================================
+# 使用方式: crontab -e 添加以下任务
+# 或使用 schedule 库在 Python 中调度
+
+# ==================== 环境变量 ====================
+# 确保已加载 .env 文件或设置环境变量
+SHELL=/bin/zsh
+PATH=/usr/local/bin:/usr/bin:/bin
+PROJECT_DIR=/Users/Jenner/Documents/GEO/021kp-geo-pipeline
+
+# ==================== 任务定义 ====================
+
+# 1. 每日14:00 执行GEO流水线（处理当日新增岗位）
+0 14 * * * cd $PROJECT_DIR && .venv/bin/python -m src.main --mode pipeline --csv data/sample_jobs.csv >> logs/pipeline_$(date +\%Y\%m\%d).log 2>&1
+
+# 2. 每日20:00 执行引用率检查与告警推送
+0 20 * * * cd $PROJECT_DIR && .venv/bin/python -m src.dist_monitor --mode check >> logs/monitor_$(date +\%Y\%m\%d).log 2>&1
+
+# 3. 每小时整点执行API健康检查（仅记录，不推送）
+0 * * * * cd $PROJECT_DIR && .venv/bin/python -c "from src.auth_signaler import APISignaler; s=APISignaler(); print(s.health_check())" >> logs/health_$(date +\%Y\%m\%d).log 2>&1
+
+# 4. 每周一09:00 生成周报统计报告
+0 9 * * 1 cd $PROJECT_DIR && .venv/bin/python scripts/generate_report.py --type weekly >> logs/reports/weekly_$(date +\%Y\%m\%d).md 2>&1
+
+# 5. 每月1号03:00 清理过期审计日志(保留180天)
+0 3 1 * * find $PROJECT_DIR/audit_logs -name "*.jsonl" -mtime +180 -delete >> logs/cleanup.log 2>&1
+
+# ==================== Python Schedule模式 ====================
+# 如果不想使用系统crontab, 可用以下Python代码替代:
+
+"""
+import schedule
+import time
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+def job_pipeline():
+    from main import run_pipeline_mode
+    result = run_pipeline_mode(csv_path="./data/sample_jobs.csv")
+    print(f"[{time.strftime('%H:%M:%S')}] 流水线执行完成: {result['status']}")
+
+def monitor_check():
+    from dist_monitor import DistributionMonitor
+    monitor = DistributionMonitor()
+    report = monitor.check_citation_rate()
+    if report.get('action') == 'alert':
+        monitor.send_alert(report)
+
+# 注册任务
+schedule.every().day.at("14:00").do(job_pipeline)
+schedule.every().day.at("20:00").do(monitor_check)
+
+print("⏰ 定时任务服务启动...")
+while True:
+    schedule.run_pending()
+    time.sleep(60)  # 每分钟检查一次
+"""
+
+# ==================== systemd Timer (Linux生产环境) ================
+# 如需部署至Linux服务器, 建议使用systemd管理:
+
+"""
+# /etc/systemd/system/geo-pipeline.service
+[Unit]
+Description=021kp GEO Pipeline Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/021kp-geo-pipeline
+ExecStart=/opt/021kp-geo-pipeline/.venv/bin/python -m scripts.scheduler
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+# /etc/systemd/system/geo-pipeline.timer
+[Unit]
+Description=Run GEO Pipeline every day at 14:00 and 20:00
+
+[Timer]
+OnCalendar=*-*-* 14:00:00
+OnCalendar=*-*-* 20:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""

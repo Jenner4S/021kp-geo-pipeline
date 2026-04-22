@@ -1,0 +1,102 @@
+name: Build Executables
+
+on:
+  push:
+    branches: [main, release/*]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: 021kp-geo-pipeline-win64
+            spec: geo-pipeline-windows.spec
+          - os: macos-14
+            artifact_name: 021kp-geo-pipeline-macos-arm64
+            spec: 021kp-geo-pipeline-macos-arm64.spec
+          - os: ubuntu-22.04
+            artifact_name: 021kp-geo-pipeline-linux-amd64
+            spec: geo-pipeline-linux.spec
+          - os: ubuntu-22.04
+            artifact_name: 021kp-geo-pipeline-linux-arm64
+            spec: geo-pipeline-linux.spec
+            cross: arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
+        working-directory: ${{ github.workspace }}
+
+      - name: Build (macOS)
+        if: matrix.os == 'macos-14'
+        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
+        working-directory: ${{ github.workspace }}
+
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-22.04' && matrix.cross != 'arm64'
+        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
+        working-directory: ${{ github.workspace }}
+
+      - name: Build (Linux ARM64)
+        if: matrix.os == 'ubuntu-22.04' && matrix.cross == 'arm64'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          CFLAGS="-target aarch64-linux-gnu" CXXFLAGS="-target aarch64-linux-gnu" \
+          LDFLAGS="-target aarch64-linux-gnu" \
+          uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
+        working-directory: ${{ github.workspace }}
+
+      - name: Locate artifact
+        id: artifact
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Include "*.exe" | Where-Object { $_.Name -like "*geo-pipeline*" } | Select-Object -First 1
+          if ($exe) {
+            Write-Host "found=$exe"
+            Write-Host "found=$(Resolve-Path $exe)"
+          }
+        shell: pwsh
+        if: matrix.os == 'windows-latest'
+
+      - name: Upload artifact (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ github.workspace }}/dist/021kp-geo-pipeline.exe
+          retention-days: 30
+
+      - name: Upload artifact (macOS)
+        uses: actions/upload-artifact@v4
+        if: matrix.os == 'macos-14'
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ github.workspace }}/dist/021kp-geo-pipeline-macos-arm64
+          retention-days: 30
+
+      - name: Upload artifact (Linux)
+        uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-22.04'
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ github.workspace }}/dist/021kp-geo-pipeline
+          retention-days: 30

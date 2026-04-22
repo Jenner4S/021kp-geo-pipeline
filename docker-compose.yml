@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  # ==================== GEO Pipeline 主服务 ====================
+  geo-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: 021kp/geo-pipeline:v2.0.0
+    container_name: geo-pipeline-prod
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080"
+    
+    environment:
+      # MySQL连接(使用Docker网络内部主机名)
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=geo_readonly  # 只读账号!
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
+      - DB_NAME=021kp_db
+      
+      # 平台API凭证(通过.env文件或secrets管理)
+      - WECHAT_APPID=${WECHAT_APPID:-}
+      - WECHAT_SECRET=${WECHAT_SECRET:-}
+      - DOUYIN_TOKEN=${DOUYIN_TOKEN:-}
+      - BAIDU_API_KEY=${BAIDU_API_KEY:-}
+      
+      # 运行模式
+      - GEO_MODE=server
+      - LOG_LEVEL=INFO
+    
+    volumes:
+      # 配置文件挂载(运行时修改无需重建镜像)
+      - ./config/settings.local.yaml:/app/config/settings.local.yaml:ro
+      # 数据输出目录
+      - ./dist:/app/dist
+      - ./audit_logs:/app/audit_logs
+    
+    networks:
+      - geo-net
+    
+    depends_on:
+      mysql:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "/uv", "run", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+
+  # ==================== MySQL 8.0 (开发/测试用) ====================
+  mysql:
+    image: mysql:8.0
+    container_name: geo-mysql-dev
+    restart: unless-stopped
+    
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
+      MYSQL_DATABASE: 021kp_db
+      MYSQL_USER: geo_readonly
+      MYSQL_PASSWORD: ${DB_PASSWORD:-readonly_pass}
+    
+    ports:
+      - "3306:3306"
+    
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=100
+      - --innodb-buffer-pool-size=256M
+    
+    networks:
+      - geo-net
+    
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "geo_readonly", "-p${DB_PASSWORD:-readonly_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ==================== 网络配置 ====================
+networks:
+  geo-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  mysql_data:
+    driver: local
+
+# ============================================================
+# 使用方法:
+#
+#   首次启动(含MySQL初始化):
+#     docker-compose up -d
+#
+#   仅启动GEO服务(MySQL已在外部):
+#     docker-compose up -d geo-pipeline
+#
+#   查看日志:
+#     docker-compose logs -f geo-pipeline
+#
+#   健康检查:
+#     curl http://localhost:8080/health
+#     curl http://localhost:8080/ready
+#
+#   进入容器调试:
+#     docker-compose exec geo-pipeline sh
+#
+#   重启服务:
+#     docker-compose restart geo-pipeline
+#
+# ============================================================

@@ -1,0 +1,93 @@
+# 021kp.com GEO自动化运营系统 - 核心配置文件
+# 版本: v2.0 | 日期: 2026-04-21
+# 说明: 本配置遵循《标识办法》(2025)与深度合成规定要求
+
+# ==================== 系统基础配置 ====================
+system:
+  name: "松江快聘GEO自动化管道"
+  version: "2.0.0"
+  environment: "production"  # development/staging/production
+  timezone: "Asia/Shanghai"
+  log_level: "INFO"
+
+# ==================== 数据源配置 ====================
+database:
+  type: sqlite              # sqlite (默认) / mysql / postgresql
+  path: ./data/geo_pipeline.db   # SQLite 文件路径 (仅sqlite模式)
+  host: "${DB_HOST:localhost}"
+  port: "${DB_PORT:3306}"
+  user: "${DB_USER:root}"
+  password: "${DB_PASSWORD:}"
+  database: "${DB_NAME:geo_pipeline}"
+  table: "jobs"
+  read_replica: true
+  sync_interval_minutes: 15
+
+# ==================== 合规闸门配置 (Phase 1) ====================
+compliance:
+  explicit_marker: "AI辅助生成标识: 本内容由AI整理，仅供参考"
+  meta_name: "x-ai-source-id"
+  meta_content: "jiangsong_kuaipin_v1_20260420"
+  ban_words_file: "./config/ban_words.txt"
+  audit_log_retention_days: 180
+  audit_log_dir: "./audit_logs"
+  
+# ==================== 意图路由器配置 (Phase 2) ====================
+intent:
+  core_vectors:
+    - "松江急招岗位"
+    - "G60区域薪资区间"
+    - "备案企业查询"
+  longtail_queries:
+    - "松江大学城周边兼职推荐"
+    - "松江区人社局白名单企业查询"
+    - "松江通勤30分钟内岗位匹配"
+    - "长三角一体化人才政策指引"
+    - "松江企业用工风险排查清单"
+  platform_mapping_file: "./config/platform_mapping.json"
+
+# ==================== 内容工厂配置 (Phase 3) ====================
+content_factory:
+  schema_context: "https://schema.org"
+  schema_type: "JobPosting"
+  tldr_max_length: 120  # 首屏摘要最大字符数
+  data_anchor_density: 3  # 每千字引用钩子数量
+  output_dir: "./dist"
+  template_dir: "./templates"
+
+# ==================== API路由配置 (Phase 4) ====================
+api_routing:
+  lbs_tag: "songjiang_district/G60_corridor"
+  max_push_per_day_wechat: 10
+  max_push_per_day_douyin: 15
+  max_push_per_day_baidu: 50
+  
+  # 平台API凭证(通过环境变量注入)
+  wechat:
+    app_id: "${WECHAT_APP_ID:}"
+    app_secret: "${WECHAT_APP_SECRET:}"
+    base_url: "https://api.weixin.qq.com"
+    
+  douyin:
+    client_key: "${DOUYIN_CLIENT_KEY:}"
+    client_secret: "${DOUYIN_CLIENT_SECRET:}"
+    base_url: "https://open.douyin.com"
+    
+  baidu:
+    api_key: "${BAIDU_API_KEY:}"
+    site_url: "https://www.021kp.com"
+    base_url: "https://ziyuan.baidu.com"
+
+# ==================== 监控与告警配置 (Phase 5) ====================
+monitoring:
+  schedule_cron: "0 14,20 * * *"  # 每日14:00/20:00触发
+  citation_rate_threshold: 0.005   # 引用率阈值 0.5%
+  api_success_rate_threshold: 0.95  # API成功率阈值
+  monitor_interval_hours: 2        # 监控轮询间隔
+  alert_webhook: "${ALERT_WEBHOOK:}"  # 告警回调地址(企业微信/钉钉)
+  
+  # 回滚触发条件
+  rollback:
+    consecutive_failures: 3       # 连续失败次数
+    freeze_duration_hours: 48     # 冻结时长
+    auto_rollback_enabled: true  # 是否自动回滚至Plan_C模板

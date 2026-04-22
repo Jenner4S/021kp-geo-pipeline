@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>松江快聘 GEO Pipeline - 操作台</title>
+<link rel="stylesheet" href="/static/app.css">
+<!-- 无障碍性基础 -->
+<meta name="description" content="GEO Pipeline - 松江快聘生成式引擎优化操作台">
+</head>
+<body>
+
+<!-- ==================== 布局 ==================== -->
+<div class="app-layout">
+
+    <!-- 左侧图标导航 (GEO 四阶段对齐) -->
+    <nav class="icon-nav" id="iconNav">
+        <div style="font-size:22px;margin-bottom:16px;">🌍</div>
+
+        <button class="nav-icon-btn active" data-page="workflow" title="操作流程">
+            📋<span class="nav-label">操作流程</span>
+        </button>
+        <button class="nav-icon-btn" data-page="jobs" title="岗位数据">
+            👥<span class="nav-label">岗位数据</span>
+        </button>
+        <button class="nav-icon-btn" data-page="geo-framework" title="GEO四阶段框架">
+            🎯<span class="nav-label">GEO框架</span>
+        </button>
+        <button class="nav-icon-btn" data-page="geo-audit" title="GEO审计评分">
+            🔬<span class="nav-label">GEO审计</span>
+        </button>
+        <button class="nav-icon-btn" data-page="schema" title="Schema预览">
+            🏷️<span class="nav-label">Schema</span>
+        </button>
+        <button class="nav-icon-btn" data-page="monitor" title="监控效果">
+            📊<span class="nav-label">监控效果</span>
+        </button>
+        <button class="nav-icon-btn" data-page="config" title="系统设置">
+            ⚙️<span class="nav-label">设置</span>
+        </button>
+
+        <div class="nav-spacer"></div>
+        <div class="nav-bottom">
+            <button class="nav-icon-btn" onclick="toggleTheme()" title="切换主题">🌙</button>
+        </div>
+    </nav>
+
+    <!-- 顶栏 -->
+    <header class="topbar">
+        <div class="topbar-left">
+            <span class="topbar-logo">松江快聘 <span>GEO Pipeline</span></span>
+            <span class="status-pill online" id="dbStatus"><span class="status-dot"></span> 系统就绪</span>
+        </div>
+        <div class="topbar-actions">
+            <button class="btn-outline" onclick="refreshData()">🔄 刷新</button>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="main-area">
+
+        <!-- ============================================================  
+             PAGE 1: 工作流操作台 (核心页面 - 用户进来第一步) 
+             ============================================================ -->
+        <section class="page active" id="page-workflow">
+
+            <!-- 流程步骤条 -->
+            <div class="workflow-stepper" id="wfStepper">
+                <div class="wfs-step active" data-wf="1" onclick="switchPage('workflow')">
+                    <div class="wfs-num">1</div>
+                    <div><div class="wfs-label">准备数据</div><div class="wfs-desc">上传岗位CSV文件</div></div>
+                </div>
+                <div class="wfs-arrow">→</div>
+                <div class="wfs-step" data-wf="2" id="wfStep2">
+                    <div class="wfs-num">2</div>
+                    <div><div class="wfs-label">执行流水线</div><div class="wfs-desc">5阶段GEO处理</div></div>
+                </div>
+                <div class="wfs-arrow">→</div>
+                <div class="wfs-step" data-wf="3" id="wfStep3">
+                    <div class="wfs-num">3</div>
+                    <div><div class="wfs-label">查看结果</div><div class="wfs-desc">Schema/内容资产</div></div>
+                </div>
+                <div class="wfs-arrow">→</div>
+                <div class="wfs-step" data-wf="4" id="wfStep4">
+                    <div class="wfs-num">4</div>
+                    <div><div class="wfs-label">监控引用率</div><div class="wfs-desc">AI分发效果追踪</div></div>
+                </div>
+            </div>
+
+            <!-- ===== STEP 1: 数据准备 ===== -->
+            <div id="step1Area">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>📂 第一步：上传岗位数据</h3>
+                        <span class="badge badge-blue">必填</span>
+                    </div>
+                    <div class="card-body">
+                        <p style="color:var(--text-secondary);margin-bottom:20px;font-size:14px;">
+                            上传包含招聘信息的 CSV 文件。系统将自动完成合规检查、意图分类、结构化内容生成，并推送到 AI 搜索引擎。
+                        </p>
+
+                        <!-- 上传区域 -->
+                        <div class="upload-zone" id="uploadZone">
+                            <input type="file" id="fileInput" accept=".csv" style="display:none;">
+                            <span class="upload-icon">📁</span>
+                            <p>拖拽 CSV 文件到这里，或点击选择文件</p>
+                            <p class="hint">支持 .csv 格式 | 包含字段: title, company, location, min_salary, max_salary 等</p>
+                        </div>
+
+                        <!-- 文件信息栏 (上传后显示) -->
+                        <div class="file-info-bar hidden" id="fileInfoBar">
+                            <span style="font-size:18px;">✅</span>
+                            <span class="file-name" id="fileNameDisplay"></span>
+                            <span class="file-meta" id="fileMetaDisplay"></span>
+                            <span class="remove-btn" id="removeFileBtn" title="移除">✕</span>
+                        </div>
+
+                        <!-- [W1] CSV 数据预览表格 (上传成功后显示) -->
+                        <div class="card hidden mt-16" id="csvPreviewCard">
+                            <div class="card-head">
+                                <h4>📋 数据预览 — 确认无误后再执行流水线</h4>
+                                <span class="badge badge-blue" id="csvPreviewCount">0 条记录</span>
+                            </div>
+                            <div class="card-body table-wrapper">
+                                <table class="data-table">
+                                    <thead id="csvPreviewHead"></thead>
+                                    <tbody id="csvPreviewBody"></tbody>
+                                </table>
+                                <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">
+                                    💡 只显示前 10 条预览，完整数据将在流水线执行时全部处理
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- 运行模式选项 -->
+                        <div style="margin-top:24px;" id="modeOptions">
+                            <label class="form-label">运行模式</label>
+                            <div class="row">
+                                <select class="select" id="pipelineMode" style="max-width:320px;">
+                                <option value="pipeline">标准模式 — 从CSV文件读取并处理</option>
+                                <option value="db">数据库模式 — 从SQLite读取岗位数据</option>
+                                <option value="import">导入模式 — 将CSV数据写入SQLite数据库</option>
+                                </select>
+                            </div>
+
+                            <!-- DB模式专属选项 -->
+                            <div class="cols-2 mt-16 hidden" id="dbModeOpts">
+                                <div class="form-group">
+                                    <label class="form-label">最大处理条数</label>
+                                    <input type="number" class="input" id="dbLimit" value="50" min="1" max="1000">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">行业类别</label>
+                                    <select class="select" id="dbCategory">
+                                        <option value="">全部类别</option>
+                                        <option value="manufacturing">制造业</option>
+                                        <option value="technology">IT/互联网</option>
+                                        <option value="ecommerce">电子商务</option>
+                                        <option value="logistics">物流仓储</option>
+                                        <option value="education">教育培训</option>
+                                        <option value="hr_services">人力资源</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style="margin-top:10px;">
+                                <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text-secondary);">
+                                    <input type="checkbox" id="urgentOnly" style="width:16px;height:16px;"> 仅处理急招岗位
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- 主操作按钮 -->
+                        <div style="margin-top:28px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;" id="actionBar">
+                            <button class="btn-primary btn-lg" id="runPipelineBtn" onclick="Workflow.execute()">
+                                ▶ 开始执行 GEO 流水线
+                            </button>
+                            <button class="btn-outline" onclick="Workflow.testDb()">
+                                🔗 测试数据库连接
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 执行进度区 (点击运行后展开) -->
+                <div class="card hidden" id="progressCard">
+                    <div class="card-head">
+                        <h3>⚡ GEO 流水线执行中...</h3>
+                        <span class="badge badge-blue" id="progressBadge">Phase 0/5</span>
+                    </div>
+                    <div class="card-body">
+                        <!-- 总进度条 -->
+                        <div class="progress-track"><div class="progress-fill" id="overallProgress" style="width:0%"></div></div>
+                        
+                        <!-- 分阶段进度 -->
+                        <div class="pipeline-progress" id="phaseProgress">
+                            <!-- JS动态填充 -->
+                        </div>
+
+                        <!-- 实时日志 -->
+                        <label class="form-label mt-16">实时日志</label>
+                        <div class="log-console" id="logConsole">等待启动...\n</div>
+
+                        <!-- 结果摘要 (完成后显示) -->
+                        <div class="hidden mt-24" id="resultSummary"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 快速统计卡片 -->
+            <div class="cols-3 mt-24" id="quickStats">
+                <!-- JS动态填充 -->
+            </div>
+
+        </section>
+
+
+        <!-- ============================================================  
+             PAGE 2: 岗位数据表 (增强版: 删除/详情/分类筛选)
+             ============================================================ -->
+        <section class="page" id="page-jobs">
+            <div class="card">
+                <div class="card-head">
+                    <h3>👥 岗位数据列表</h3>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <!-- [J4] 分类筛选 -->
+                        <select class="select" id="jobCategoryFilter" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);font-size:12px;" onchange="Jobs.load(1)">
+                            <option value="">全部分类</option>
+                            <option value="manufacturing">制造业</option>
+                            <option value="technology">IT/互联网</option>
+                            <option value="ecommerce">电子商务</option>
+                            <option value="logistics">物流仓储</option>
+                            <option value="education">教育培训</option>
+                            <option value="hr_services">人力资源</option>
+                        </select>
+                        <input type="text" class="input" placeholder="搜索岗位名称、公司..." 
+                               style="width:220px;padding:7px 14px;font-size:13px;" id="jobSearch" oninput="Jobs.searchDebounce()">
+                    </div>
+                </div>
+                <div class="card-body table-wrapper">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>#</th><th>岗位名称</th><th>企业</th><th>地点</th>
+                            <th>薪资</th><th>分类</th><th>急招</th><th>操作</th>
+                        </tr></thead>
+                        <tbody id="jobsBody"></tbody>
+                    </table>
+                    <div class="pagination-wrap" id="jobsPagination"></div>
+                </div>
+            </div>
+
+            <!-- [J2] 岗位详情弹窗 (Modal) -->
+            <div class="modal-overlay hidden" id="jobDetailModal" onclick="Jobs.closeDetail(event)" role="dialog" aria-modal="true" aria-labelledby="jobDetailTitle">
+                <div class="modal-content card" style="max-width:640px;width:90%;" onclick="event.stopPropagation()" tabindex="-1">
+                    <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h3 style="margin:0;" id="jobDetailTitle">岗位详情</h3>
+                        <button class="btn-outline btn-sm" onclick="Jobs.closeDetail()" title="关闭">✕</button>
+                    </div>
+                    <div class="card-body" id="jobDetailBody">
+                        <!-- JS动态填充 -->
+                    </div>
+                    <div class="card-body" style="border-top:1px solid var(--border-color);padding:14px 20px;display:flex;gap:10px;justify-content:flex-end;">
+                        <button class="btn-outline btn-sm" onclick="Schema.fromJob(document.getElementById('jobDetailRawTitle').value)">Schema 预览</button>
+                        <button class="btn-primary btn-sm" onclick="GEOAudit.auditFromDetail()">GEO 审计</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ============================================================  
+             PAGE 3: Schema 预览 & 内容资产 (增强版: 多Schema类型+模板)
+             ============================================================ -->
+        <section class="page" id="page-schema">
+            <!-- [S1] Schema 类型切换标签 -->
+            <div style="margin-bottom:20px;">
+                <h2 style="font-size:22px;font-weight:600;margin-bottom:12px;">🏷️ Schema.org 结构化数据</h2>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;" id="schemaTypeTabs">
+                    <button class="btn-primary btn-sm schema-tab active" data-type="jobposting" onclick="Schema.switchType('jobposting')">JobPosting 岗位</button>
+                    <button class="btn-outline btn-sm schema-tab" data-type="organization" onclick="Schema.switchType('organization')">Organization 企业</button>
+                    <button class="btn-outline btn-sm schema-tab" data-type="faq" onclick="Schema.switchType('faq')">FAQ 常见问题</button>
+                    <button class="btn-outline btn-sm schema-tab" data-type="breadcrumb" onclick="Schema.switchType('breadcrumb')">Breadcrumb 导航</button>
+                </div>
+            </div>
+
+            <!-- JobPosting 输入区 (默认显示) -->
+            <div id="schemaJobArea">
+                <div class="cols-2">
+                    <div class="card">
+                        <div class="card-head"><h3>✏️ 输入参数生成 JobPosting</h3></div>
+                        <div class="card-body">
+                            <!-- [S3] 快速行业模板 -->
+                            <div style="margin-bottom:14px;">
+                                <label class="form-label">快速模板</label>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                    <button class="btn-outline btn-sm" onclick="Schema.applyTemplate('manufacturing')" style="font-size:11px;">制造业 CNC</button>
+                                    <button class="btn-outline btn-sm" onclick="Schema.applyTemplate('it')" style="font-size:11px;">IT/Python开发</button>
+                                    <button class="btn-outline btn-sm" onclick="Schema.applyTemplate('logistics')" style="font-size:11px;">物流仓储</button>
+                                    <button class="btn-outline btn-sm" onclick="Schema.applyTemplate('ecommerce')" style="font-size:11px;">电商运营</button>
+                                    <button class="btn-outline btn-sm" onclick="Schema.applyTemplate('hr')" style="font-size:11px;">HR专员</button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">岗位标题（含地理关键词）</label>
+                                <input type="text" class="input" id="schemaTitle" value="松江G60园区 高级Python工程师" placeholder="例: 松江九亭 CNC数控操作员">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">企业名称</label>
+                                <input type="text" class="input" id="schemaCompany" value="上海智能装备制造有限公司">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">详细地址 (LBS锚点)</label>
+                                <input type="text" class="input" id="schemaLocation" value="上海市松江区洞泾镇沈砖公路538号智能制造园">
+                            </div>
+                            <div class="row">
+                                <div class="form-group">
+                                    <label class="form-label">最低月薪 (元)</label>
+                                    <input type="number" class="input" id="schemaMinSalary" value="12000">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">最高月薪 (元)</label>
+                                    <input type="number" class="input" id="schemaMaxSalary" value="25000">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">岗位要求</label>
+                                <textarea class="textarea" id="schemaReq">1.本科及以上学历,计算机相关专业
+2.3年以上Python后端开发经验
+3.熟悉Django/Flask框架
+4.有高并发项目经验优先</textarea>
+                            </div>
+                            <button class="btn-primary" onclick="Schema.generate()">生成 JSON-LD 结构化数据</button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>📄 Schema.org 输出预览</h3>
+                            <div style="display:flex;gap:6px;">
+                                <button class="btn-outline btn-sm" onclick="Schema.copy()">📋 复制</button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="schema-preview" id="schemaOutput">// 点击"生成"按钮查看 Schema.org JobPosting 结构化数据
+// 此数据将被AI搜索引擎索引，提升被引用概率</div>
+                            
+                            <div style="margin-top:16px;" id="seoChecklist">
+                                <label class="form-label">SEO 质量检查</label>
+                                <div id="seoTips"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Organization / FAQ / Breadcrumb 简化输入区 (按需显示) -->
+            <div id="schemaAltArea" class="hidden">
+                <div class="cols-2">
+                    <div class="card">
+                        <div class="card-head"><h3 id="schemaAltInputTitle">参数输入</h3></div>
+                        <div class="card-body" id="schemaAltInputs">
+                            <!-- JS动态填充 -->
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head"><h3>📄 JSON-LD 输出</h3></div>
+                        <div class="card-body">
+                            <div class="schema-preview" id="schemaAltOutput">// 选择类型并点击生成
+// 支持生成 Organization / FAQ / Breadcrumb 结构化数据</div>
+                            <div style="margin-top:10px;display:flex;gap:8px;">
+                                <button class="btn-outline btn-sm" id="schemaAltCopyBtn" onclick="Schema.copyAlt()" disabled>📋 复制</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ============================================================
+             PAGE 4: 监控 & 统计 (增强版 - 集成 Phase 5 dist_monitor)
+             ============================================================ -->
+        <section class="page" id="page-monitor">
+
+            <!-- 操作栏：手动检查 + 刷新 -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2 style="margin:0;font-size:22px;font-weight:600;">📊 监控效果中心</h2>
+                <div style="display:flex;gap:10px;">
+                    <button class="btn-primary btn-sm" onclick="Monitor.triggerCheck()" id="manualCheckBtn">
+                        🔍 执行引用率检测
+                    </button>
+                    <button class="btn-outline btn-sm" onclick="Monitor.load()">
+                        🔄 刷新全部
+                    </button>
+                </div>
+            </div>
+
+            <!-- AI 引用率监控面板 (新增) -->
+            <div class="card" id="citationPanelCard" style="border-left:4px solid #1a73e8;">
+                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h3>🛰️ AI 引用率监控</h3>
+                    <span class="tag tag-green" id="citationOverallStatus">正常</span>
+                </div>
+                <div class="card-body">
+                    <div class="phase-grid" id="citationMetricsGrid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));gap:12px;">
+                        <div style="grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0;">
+                            点击「执行引用率检测」获取各平台实时数据
+                        </div>
+                    </div>
+                    <!-- 趋势摘要 -->
+                    <div id="citationTrendSummary" style="display:none;margin-top:14px;padding:12px;background:var(--gray-50);border-radius:8px;font-size:13px;"></div>
+                </div>
+            </div>
+
+            <!-- 回滚状态指示器 (新增) -->
+            <div class="card mt-16" id="rollbackPanelCard">
+                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h3>🔒 回滚状态 / 安全机制</h3>
+                    <button class="btn-outline btn-sm" onclick="Monitor.loadRollback()" title="刷新回滚状态">刷新</button>
+                </div>
+                <div class="card-body" id="rollbackPanelBody" style="min-height:60px;">
+                    <div style="color:var(--text-muted);font-size:13px;">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 告警中心 (新增) -->
+            <div class="card mt-16" id="alertsPanelCard" style="border-left:4px solid #d97706;">
+                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h3>⚠️ 告警中心</h3>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="tag tag-red" id="alertCriticalCount">0 Critical</span>
+                        <span class="tag tag-orange" id="alertWarningCount">0 Warning</span>
+                    </div>
+                </div>
+                <div class="card-body" id="alertsPanelBody" style="max-height:280px;overflow-y:auto;">
+                    <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 核心指标卡片 (保留原有，增强布局) -->
+            <div class="phase-grid mt-16" id="monitorCards" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
+                <!-- JS填充 -->
+            </div>
+
+            <div class="cols-2 mt-16">
+                <div class="card">
+                    <div class="card-head"><h3>📈 分类分布</h3></div>
+                    <div class="card-body" id="chartCategory"></div>
+                </div>
+                <div class="card">
+                    <div class="card-head"><h3>💰 薪资区间分布</h3></div>
+                    <div class="card-body" id="chartSalary"></div>
+                </div>
+            </div>
+
+            <!-- 系统状态表 (折叠为紧凑模式) -->
+            <div class="card mt-16">
+                <details open>
+                    <summary style="cursor:pointer;font-weight:600;font-size:14px;padding:6px 0;">🔧 系统状态详情</summary>
+                    <div class="card-body">
+                        <table class="data-table" style="width:auto;" id="sysStatusTable">
+                            <tr><th>组件</th><th>状态</th><th>详情</th></tr>
+                        </table>
+                    </div>
+                </details>
+            </div>
+
+            <!-- 监控报告列表 (新增) -->
+            <div class="card mt-16">
+                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h3>📁 监控报告历史</h3>
+                    <span style="font-size:12px;color:var(--text-muted);" id="reportsTotalHint"></span>
+                </div>
+                <div class="card-body" id="reportsPanelBody">
+                    <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 执行历史 (增强版) -->
+            <div class="card mt-16">
+                <div class="card-head">
+                    <h3>📜 最近执行记录</h3>
+                    <select id="historyModeFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-size:12px;" onchange="Monitor.filterHistory()">
+                        <option value="">全部模式</option>
+                        <option value="pipeline">Pipeline</option>
+                        <option value="db">Database</option>
+                        <option value="import">Import</option>
+                    </select>
+                </div>
+                <div class="card-body">
+                    <div id="historyList"></div>
+                    <div class="empty-state hidden" id="historyEmpty">
+                        <span class="icon-big">📭</span>
+                        <p>暂无执行记录</p>
+                        <p class="sub">运行流水线后记录将在此处显示</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ============================================================
+             PAGE 5: 系统配置（动态配置系统）
+             ============================================================ -->
+        <section class="page" id="page-config">
+            <div style="margin:0 auto;">
+
+                <!-- 页面标题 -->
+                <div class="card mb-16" style="border:none;background:transparent;padding:0;">
+                    <h2 style="font-size:22px;font-weight:600;margin-bottom:6px;">⚙️ 系统配置</h2>
+                    <p style="color:var(--text-secondary);font-size:14px;">在此界面修改所有运行参数。修改后点击保存即可生效，部分选项需要重启服务。</p>
+                </div>
+
+                <!-- 配置主体：左侧导航 + 右侧表单 -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div style="display:flex;min-height:520px;">
+
+                        <!-- 左侧分组导航 -->
+                        <div id="configGroupNav" style="width:200px;border-right:1px solid var(--border-color);background:var(--bg-secondary);padding:12px 0;flex-shrink:0;">
+                            <!-- JS动态填充分组标签 -->
+                        </div>
+
+                        <!-- 右侧表单区 -->
+                        <div style="flex:1;padding:28px 32px;overflow-y:auto;max-height:600px;">
+                            <!-- 表单区域 -->
+                            <div id="configFormArea">
+                                <!-- JS动态渲染字段 -->
+                                <p style="color:var(--text-secondary);text-align:center;padding:40px 0;">加载中...</p>
+                            </div>
+
+                            <!-- 操作按钮栏 -->
+                            <div id="configActions" style="margin-top:32px;padding-top:20px;border-top:1px solid var(--border-color);display:flex;align-items:center;gap:12px;">
+                                <!-- JS填充按钮 -->
+                                <button class="btn-outline btn-sm" onclick="Config.exportConfig()" title="导出当前全部配置">📥 导出配置</button>
+                                <label class="btn-outline btn-sm" style="cursor:pointer;" title="从文件导入配置">
+                                    📤 导入配置
+                                    <input type="file" id="configImportInput" accept=".json" style="display:none;" onchange="Config.importConfig(event)">
+                                </label>
+                            </div>
+
+                            <!-- 状态消息 -->
+                            <div id="cfgStatus" style="margin-top:12px;"></div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+
+        <!-- ============================================================
+             PAGE 6: GEO 四阶段框架概览 (新增 - 对应 doc/00.GEO 核心框架.md)
+             ============================================================ -->
+        <section class="page" id="page-geo-framework">
+            
+            <!-- 框架标题区 -->
+            <div class="card mb-16" style="border:none;background:linear-gradient(135deg,#1a73e8 0%,#7c3aed 100%);color:#fff;">
+                <h2 style="color:#fff;font-size:22px;margin-bottom:6px;">GEO 四阶段优化框架</h2>
+                <p style="opacity:0.9;font-size:14px;">Generative Engine Optimization — 从"被搜索"到"被定义"</p>
+                <p style="opacity:0.7;font-size:12px;margin-top:8px;">核心理念：GEO不是拼词密，而是拼谁的信息更"经得起推敲"</p>
+            </div>
+
+            <!-- 四阶段卡片 -->
+            <div class="cols-2 mt-24" id="geoFrameworkCards" style="grid-template-columns: repeat(2,1fr);">
+                <!-- JS动态填充 -->
+            </div>
+
+            <!-- GEO vs SEO 对比 -->
+            <div class="card mt-24">
+                <div class="card-head"><h3>🔄 GEO vs 传统 SEO</h3></div>
+                <div class="card-body">
+                    <table class="data-table" style="width:100%;">
+                        <thead><tr><th>维度</th><th>传统 SEO</th><th>GEO</th></tr></thead>
+                        <tbody id="geoVsSeoBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 实施路线图 -->
+            <div class="card mt-24">
+                <div class="card-head"><h3>📈 实施路线图</h3></div>
+                <div class="card-body" id="geoRoadmap"></div>
+            </div>
+
+            <!-- API 状态 -->
+            <div class="card mt-24">
+                <div class="card-head"><h3>🔗 可用 API 端点</h3></div>
+                <div class="card-body" id="geoApiEndpoints"></div>
+            </div>
+
+        </section>
+
+
+        <!-- ============================================================
+             PAGE 7: GEO 审计评分 (增强版: 历史持久化/批量审计/导出)
+             ============================================================ -->
+        <section class="page" id="page-geo-audit">
+            
+            <div style="margin-bottom:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                <h2 style="font-size:20px;font-weight:600;margin:0;">🔬 GEO 四阶段审计</h2>
+                <select class="select" id="auditJobSelect" style="max-width:280px;" onchange="GEOAudit.run()">
+                    <option value="">选择岗位进行审计...</option>
+                </select>
+                <button class="btn-primary" onclick="GEOAudit.run()">▶ 执行审计</button>
+                <!-- [A2] 批量审计 -->
+                <button class="btn-outline btn-sm" onclick="GEOAudit.batchRun()" title="按分类批量审计所有岗位">📦 批量审计</button>
+            </div>
+
+            <!-- 总分卡片 -->
+            <div class="phase-grid" id="auditScoreCard" style="grid-template-columns:repeat(auto-fit, minmax(200px,1fr));gap:16px;">
+
+            </div>
+
+            <!-- 操作栏 (审计完成后显示) -->
+            <div class="card mt-16 hidden" id="auditActionCard">
+                <div class="card-body" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                    <span style="font-size:13px;color:var(--text-secondary);">操作：</span>
+                    <!-- [A3] 导出按钮 -->
+                    <button class="btn-outline btn-sm" onclick="GEOAudit.exportResult('json')" disabled id="auditExportJsonBtn">导出 JSON</button>
+                    <button class="btn-outline btn-sm" onclick="GEOAudit.exportResult('md')" disabled id="auditExportMdBtn">导出 Markdown</button>
+                    <!-- [A1] 保存到历史 -->
+                    <button class="btn-primary btn-sm" onclick="GEOAudit.saveAudit()" disabled id="auditSaveBtn">💾 保存审计</button>
+                </div>
+            </div>
+
+            <!-- [L-03] 批量审计进度条（默认隐藏） -->
+            <div id="auditBatchProgress" style="margin-top:16px;" class="hidden"></div>
+
+            <!-- 四维度详细评分 -->
+            <div class="cols-2 mt-24">
+                <div id="auditDimensionsLeft"></div>
+                <div id="auditDimensionsRight"></div>
+            </div>
+
+            <!-- 改进建议 -->
+            <div class="card mt-24" id="auditSuggestionsArea" style="display:none;">
+                <div class="card-head"><h3>💡 改进建议</h3></div>
+                <div class="card-body" id="auditSuggestionsList"></div>
+            </div>
+
+            <!-- [A1] 审计历史列表 -->
+            <div class="card mt-24">
+                <div class="card-head"><h3>📜 审计历史</h3></div>
+                <div class="card-body" id="auditHistoryBody">
+                    <p style="color:var(--text-muted);font-size:13px;">加载中...</p>
+                </div>
+            </div>
+        </section>
+
+<!-- Toast容器 -->
+<div class="toast-stack" id="toastStack"></div>
+
+<!-- App JS -->
+<script src="/static/app.js"></script>
+</body>
+</html>
