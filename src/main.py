@@ -837,6 +837,10 @@ th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb}
             # 子线程中无法注册信号处理器（signal only works in main thread）
             logger.debug("非主线程环境，跳过信号处理器注册")
         
+        # 自动打开浏览器（双击运行时）
+        import webbrowser
+        webbrowser.open(ui_url, new=2, autoraise=True)
+
         server.serve_forever()
         
     except ImportError:
@@ -883,8 +887,8 @@ def main():
     parser.add_argument(
         "--mode", "-m",
         choices=["pipeline", "db", "server", "import"],
-        default="pipeline",
-        help="运行模式: pipeline/db/server/import (默认: pipeline)"
+        default="server",
+        help="运行模式: pipeline/db/server/import (默认: server)"
     )
     
     # Pipeline模式参数
