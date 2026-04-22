@@ -22,10 +22,6 @@ jobs:
           - os: ubuntu-22.04
             artifact_name: 021kp-geo-pipeline-linux-amd64
             spec: geo-pipeline-linux.spec
-          - os: ubuntu-22.04
-            artifact_name: 021kp-geo-pipeline-linux-arm64
-            spec: geo-pipeline-linux.spec
-            cross: arm64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -37,46 +33,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install uv
-        run: pip install uv
-
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: pip install -r requirements.txt && pip install pyinstaller
 
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
-        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
-        working-directory: ${{ github.workspace }}
+        run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
 
       - name: Build (macOS)
         if: matrix.os == 'macos-14'
-        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
-        working-directory: ${{ github.workspace }}
+        run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
 
       - name: Build (Linux)
-        if: matrix.os == 'ubuntu-22.04' && matrix.cross != 'arm64'
-        run: uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
-        working-directory: ${{ github.workspace }}
-
-      - name: Build (Linux ARM64)
-        if: matrix.os == 'ubuntu-22.04' && matrix.cross == 'arm64'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          CFLAGS="-target aarch64-linux-gnu" CXXFLAGS="-target aarch64-linux-gnu" \
-          LDFLAGS="-target aarch64-linux-gnu" \
-          uv run pyinstaller --clean --noconfirm ${{ matrix.spec }}
-        working-directory: ${{ github.workspace }}
-
-      - name: Locate artifact
-        id: artifact
-        run: |
-          $exe = Get-ChildItem -Path . -Recurse -Include "*.exe" | Where-Object { $_.Name -like "*geo-pipeline*" } | Select-Object -First 1
-          if ($exe) {
-            Write-Host "found=$exe"
-            Write-Host "found=$(Resolve-Path $exe)"
-          }
-        shell: pwsh
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'ubuntu-22.04'
+        run: pyinstaller --clean --noconfirm ${{ matrix.spec }}
 
       - name: Upload artifact (Windows)
         uses: actions/upload-artifact@v4
