@@ -3,14 +3,15 @@ import os
 from pathlib import Path
 
 block_cipher = None
+SPECROOT = Path(os.getcwd())
 
 a = Analysis(
     ['src/main.py'],
-    pathex=[str(Path(__file__).parent)],
+    pathex=[str(SPECROOT)],
     binaries=[],
     datas=[
-        ('config', 'config'),
-        ('data', 'data'),
+        (str(SPECROOT / 'config'), 'config'),
+        (str(SPECROOT / 'data'), 'data'),
     ],
     hiddenimports=[
         'compliance_gate',
