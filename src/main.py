@@ -386,7 +386,12 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
         web_ui: 是否启用Web UI可视化界面（默认开启）
     """
     try:
-        from http.server import HTTPServer, BaseHTTPRequestHandler
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from socketserver import ThreadingMixIn
+        # 使用 ThreadingHTTPServer 支持并发请求（优化性能）
+        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+            daemon_threads = True  # 线程结束时自动清理
+            allow_reuse_address = True
         
         # 预初始化DB连接(如果启用)
         _db_instance = None
@@ -530,12 +535,34 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                             return
                         self._send_response_dict(result)
                         return
+                    
+                    # === 实时日志流 (SSE) ===
+                    elif path == '/api/logs/stream' and _web_handler:
+                        result = _web_handler._api_log_stream({'path': self.path})
+                        self._send_response_dict(result)
+                        return
 
-                    elif path.startswith('/api/jobs') and _web_handler:
+                    elif path.startswith('/api/job') and _web_handler:
                         if path.startswith('/api/job/') and path.count('/') == 3:
                             result = _web_handler._api_get_job({'path': self.path})
                         else:
                             result = _web_handler._api_list_jobs({'path': self.path})
+                        self._send_response_dict(result)
+                        return
+
+                    # === 关键词动态配置 API ===
+                    elif path.startswith('/api/keywords') and _web_handler:
+                        if path == '/api/keywords' and method == 'GET':
+                            result = _web_handler._api_keywords_get({'path': self.path})
+                        elif path == '/api/keywords/refresh' and method == 'POST':
+                            result = _web_handler._api_keywords_refresh({'path': self.path, 'method': 'POST'})
+                        elif path == '/api/keywords/save' and method == 'POST':
+                            result = _web_handler._api_keywords_save({'path': self.path, 'method': 'POST'})
+                        elif path == '/api/keywords/upload' and method == 'POST':
+                            result = _web_handler._api_keywords_upload({'path': self.path, 'method': 'POST'})
+                        else:
+                            self._send_json({"error": f"Keywords API not found: {path}"}, 404)
+                            return
                         self._send_response_dict(result)
                         return
                     
@@ -661,6 +688,15 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                         self._send_response_dict(result)
                         return
 
+                    # 数据清理
+                    elif path == '/api/data/cleanup' and _web_handler:
+                        result = _web_handler._api_data_cleanup({
+                            'body': body,
+                            'path': path
+                        })
+                        self._send_response_dict(result)
+                        return
+
                     # 监控检查
                     elif path.startswith('/api/monitor/check') and _web_handler:
                         data = {}
@@ -669,11 +705,36 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                                 data = json.loads(body.decode('utf-8'))
                             except Exception:
                                 pass
-                        result = _web_handler._api_monitor_check({
+                        result = _web_handler._api_manual_check({
                             'body': body,
                             'path': path,
                             'data': data
                         })
+                        self._send_response_dict(result)
+                        return
+
+                    # 关键词 API (refresh, save, upload)
+                    elif path.startswith('/api/keywords') and _web_handler:
+                        if path == '/api/keywords/refresh':
+                            result = _web_handler._api_keywords_refresh({
+                                'body': body,
+                                'path': path
+                            })
+                        elif path == '/api/keywords/save':
+                            result = _web_handler._api_keywords_save({
+                                'body': body,
+                                'path': path
+                            })
+                        elif path == '/api/keywords/upload':
+                            content_type = self.headers.get('Content-Type', '')
+                            result = _web_handler._api_keywords_upload({
+                                'content-type': content_type,
+                                'body': body,
+                                'path': path
+                            })
+                        else:
+                            self._send_json({"error": f"Keywords API not found: {path}"}, 404)
+                            return
                         self._send_response_dict(result)
                         return
 
@@ -757,7 +818,18 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                 for key, value in headers.items():
                     self.send_header(key, value)
                 self.end_headers()
-                self.wfile.write(result.get('body', b''))
+                
+                # 处理流式响应 (SSE)
+                if result.get('is_stream') and hasattr(result.get('body'), '__iter__'):
+                    try:
+                        for chunk in result['body']:
+                            if chunk:
+                                self.wfile.write(chunk.encode('utf-8') if isinstance(chunk, str) else chunk)
+                                self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass  # 客户端断开连接
+                else:
+                    self.wfile.write(result.get('body', b''))
             
             def _send_json(self, data, status=200):
                 """发送JSON响应"""
@@ -807,7 +879,17 @@ th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb}
                 if '200' not in str(args):
                     logger.debug(f"[HTTP] {format % args}")
         
-        server = HTTPServer(('0.0.0.0', port), GEORequestHandler)
+        # 配置 loguru 输出 DEBUG 级别日志（包含完整的数据报文）
+        logger.configure(handlers=[
+            {
+                "sink": sys.stderr,
+                "level": "DEBUG",
+                "format": "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+                "colorize": True
+            }
+        ])
+        
+        server = ThreadingHTTPServer(('0.0.0.0', port), GEORequestHandler)
         
         ui_url = f"http://localhost:{port}"
         ui_link = f"\n   🎨 Web UI: http://localhost:{port}/ui" if web_ui else ""

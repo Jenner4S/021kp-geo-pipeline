@@ -69,6 +69,7 @@ function switchPage(name) {
     if(name==='config') Config.load();
     if(name==='geo-framework') GEOFramework.load();
     if(name==='geo-audit') { GEOAudit.init(); GEOAudit.run(); }
+    if(name==='keywords') Keywords.load();
 }
 
 function toggleTheme() {
@@ -90,7 +91,7 @@ function refreshData() {
 // ============================================================
 //  PAGE 1: WORKFLOW — 核心操作流程
 // ============================================================
-const Workflow = {
+var Workflow = window.Workflow = {
 
     /** 初始化上传绑定 */
     initUpload() {
@@ -485,13 +486,20 @@ const Workflow = {
 // ============================================================
 //  PAGE 2: JOBS (增强版: 删除/详情/分类筛选/防抖)
 // ============================================================
-const Jobs = {
+var Jobs = window.Jobs = {
     _debounceTimer: null,
     _currentJob: null,   // [J2] 当前查看的岗位详情
+    _currentPage: 1,
+    _categoriesLoaded: false,
     /** 刷新列表（供404错误页的"刷新"按钮调用） */
     _refreshList(){ this.load(Jobs._currentPage||1); },
     async load(page=1){
-        // [J4] 获取分类筛选
+        this._currentPage = page;
+        
+        // [J4] 获取分类筛选（首次加载时获取分类列表）
+        if(!this._categoriesLoaded){
+            await this._loadCategories();
+        }
         const catFilter = document.getElementById('jobCategoryFilter')?.value||'';
         const q = document.getElementById('jobSearch')?.value||'';
         let url = `/api/jobs?page=${page}&per_page=20&search=${encodeURIComponent(q)}`;
@@ -505,10 +513,17 @@ const Jobs = {
         }
 
         const rows=r.data.data||[];
+        
         document.getElementById('jobsBody').innerHTML=rows.map((j,i)=>`
-            <tr>
+            <tr data-source="${j.data_source||'unknown'}">
                 <td><code style="font-size:11px">${esc(j.id)||(page-1)*20+i+1}</code></td>
-                <td><strong style="cursor:pointer;color:var(--primary);" onclick="Jobs.showDetail('${encodeURIComponent(esc(j.id))}')" title="点击查看详情">${esc(j.title)||'-'}</strong></td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <strong style="cursor:pointer;color:var(--primary);" onclick="Jobs.showDetail('${encodeURIComponent(esc(j.id))}')" title="点击查看详情">${esc(j.title)||'-'}</strong>
+                        ${j.data_source === 'csv' ? '<span class="tag" style="background:#f59e0b;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;">CSV</span>' : ''}
+                        ${j.data_source === 'sqlite' ? '<span class="tag" style="background:#10b981;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;">DB</span>' : ''}
+                    </div>
+                </td>
                 <td>${esc(j.company)||'-'}</td>
                 <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${esc(j.location)||'-'}</td>
                 <td class="salary-text">¥${j.min_salary||0}-¥${j.max_salary||0}</td>
@@ -516,7 +531,7 @@ const Jobs = {
                 <td>${j.is_urgent?'<span class="tag tag-red">急招</span>':'<span style="color:var(--text-muted)">否</span>'}</td>
                 <td>
                     <div style="display:flex;gap:4px;">
-                        <button class="btn-outline btn-sm" onclick="Schema.fromJob(${jsStr(esc(j.title))})" title="Schema预览">预览</button>
+                        <button class="btn-outline btn-sm" onclick="Schema.fromJob('${encodeURIComponent(esc(j.title))}')" title="Schema预览">预览</button>
                         <button class="btn-outline btn-sm" onclick="Jobs.showDetail('${encodeURIComponent(esc(j.id))}')" title="查看详情">详情</button>
                         <!-- [J1] 删除按钮 -->
                         <button class="btn-outline btn-sm" style="color:#dc2626;border-color:#dc2626;" onclick="Jobs.deleteJob(${jsStr(j.id)},${jsStr(esc(j.title))})"
@@ -524,8 +539,39 @@ const Jobs = {
                     </div>
                 </td>
             </tr>`).join('');
-
+        
+        // 在表头添加来源指示器
+        const thead = document.querySelector('#page-jobs table thead tr');
+        if(thead && !thead.querySelector('.source-col')){
+            thead.innerHTML = '<th style="width:50px">ID</th><th>岗位名称</th><th>企业</th><th>地点</th><th>薪资</th><th>分类</th><th>状态</th><th style="width:180px">操作</th>';
+        }
+        
         renderPg(r.data.pagination,'jobsPagination',Jobs.load);
+    },
+
+    /** 加载分类列表到筛选下拉框 */
+    async _loadCategories(){
+        if(this._categoriesLoaded) return;
+        try {
+            const r = await API.get('/api/stats');
+            if(r.ok && r.data?.categories){
+                const sel = document.getElementById('jobCategoryFilter');
+                if(sel){
+                    const cats = Object.entries(r.data.categories);
+                    if(cats.length > 0){
+                        // 保留"全部分类"选项，在前面插入分类
+                        const allOpt = sel.querySelector('option[value=""]') || sel.options[0];
+                        sel.innerHTML = allOpt ? `<option value="">全部分类</option>` : '';
+                        cats.sort((a,b) => b[1] - a[1]).forEach(([cat, count]) => {
+                            if(cat && cat !== 'general'){
+                                sel.innerHTML += `<option value="${esc(cat)}">${esc(cat)} (${count})</option>`;
+                            }
+                        });
+                    }
+                }
+            }
+        } catch(e) { /* 静默失败，使用默认选项 */ }
+        this._categoriesLoaded = true;
     },
 
     /** [J3] 防抖搜索 */
@@ -602,19 +648,41 @@ const Jobs = {
 
             document.getElementById('jobDetailTitle').textContent = j.title || '岗位详情';
 
-            // 渲染详情字段
-            const fields = [
-                ['ID', j.id], ['标题', j.title], ['企业', j.company],
-                ['地点', j.location], ['最低薪资', `¥${j.min_salary||0}`],
-                ['最高薪资', `¥${j.max_salary||0}`], ['分类', j.category],
-                ['急招', j.is_urgent ? '是' : '否'], ['要求', j.requirements || '-'],
-                ['福利', j.benefits || '-'],
+            // 数据来源标签样式
+            const sourceTag = j.data_source === 'sqlite' 
+                ? `<span style="background:#10b981;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px;">📦 数据库</span>`
+                : `<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px;">📄 CSV</span>`;
+            
+            // 源文件信息
+            const sourceFile = j.source_file ? `<span style="font-size:11px;color:var(--text-muted);">(${j.source_file})</span>` : '';
+
+            // 渲染详情字段（区分纯文本和HTML字段）
+            const plainFields = [
+                ['ID', j.id, false], 
+                ['企业', j.company, false],
+                ['地点', j.location, false], 
+                ['最低薪资', `¥${j.min_salary||0}`, false],
+                ['最高薪资', `¥${j.max_salary||0}`, false], 
+                ['分类', j.category, false],
+                ['急招', j.is_urgent ? '是' : '否', false], 
+            ];
+            const htmlFields = [
+                ['标题', j.title + sourceTag, true],
+                ['要求', j.requirements, true],
+                ['福利', j.benefits, true],
+                ['数据来源', (j.data_source === 'sqlite' ? '📦 SQLite 数据库' : '📄 CSV 文件') + sourceFile, true],
             ];
 
-            body.innerHTML = fields.map(([label, val]) => `
+            body.innerHTML = plainFields.map(([label, val, isHtml]) => `
                 <div class="job-detail-field">
                     <span class="job-detail-label">${label}</span>
-                    <span class="job-detail-value">${esc(val)||'-'}</span>
+                    <span class="job-detail-value">${isHtml ? val : esc(val)||'-'}</span>
+                </div>
+            `).join('') + 
+            htmlFields.map(([label, val, isHtml]) => `
+                <div class="job-detail-field">
+                    <span class="job-detail-label">${label}</span>
+                    <span class="job-detail-value" style="white-space:pre-wrap;">${val || '-'}</span>
                 </div>
             `).join('') + `<input type="hidden" id="jobDetailRawTitle" value="${esc(j.title)}">
                          <input type="hidden" id="jobDetailRawId" value="${esc(j.id)}">`;
@@ -643,7 +711,7 @@ const Jobs = {
 // ============================================================
 //  PAGE 3: SCHEMA (增强版: 多Schema类型 + 快速模板 + 全字段填充)
 // ============================================================
-const Schema = {
+var Schema = window.Schema = {
     _currentType: 'jobposting',   // [S1] 当前 Schema 类型
     _busy: false,                  // [防重复点击] 生成锁
 
@@ -904,10 +972,18 @@ function checkRow(_field, ok, text){
 // ============================================================
 //  PAGE 4: MONITOR (增强版 - 集成 Phase 5 dist_monitor)
 // ============================================================
-const Monitor = {
+var Monitor = window.Monitor = {
     _citationData: null,
     _alertsData: null,
     _autoRefreshTimer: null,   // [L-02] 自动刷新定时器
+
+    /** 骨架屏切换：隐藏骨架占位，显示真实容器 */
+    _switchToReal(realId, skeletonId){
+        const skeleton = document.getElementById(skeletonId);
+        const real = document.getElementById(realId);
+        if(skeleton) skeleton.classList.add('hidden');
+        if(real) real.classList.remove('hidden');
+    },
 
     async load(){
         this._startAutoRefresh(); // [L-02] 启动自动刷新
@@ -957,36 +1033,79 @@ const Monitor = {
         statusEl.className = `tag ${statusCls[data.overall_status]||'tag-gray'}`;
 
         if(metrics.length===0){
+            // 骨架屏切换
+            this._switchToReal('citationMetricsGrid', 'citationMetricsGridSkeleton');
             document.getElementById('citationMetricsGrid').innerHTML=
                 '<div style="grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0;">暂无检测数据，点击「执行引用率检测」获取</div>';
+            document.getElementById('citationTrendSummary').style.display='none';
             return;
         }
+        
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('citationMetricsGrid', 'citationMetricsGridSkeleton');
 
-        // 各平台卡片
-        const trendIcons={rising:'\uD83D\uDCC8',stable:'27A1\uFE0F',falling:'\uD83D\uDCC9',unknown:'❓'};
+        // 平台颜色映射
+        const platformColors = {
+            'deepseek': '#0066cc',
+            'doubao': '#4a90d9',
+            'yuanbao': '#ff6b35',
+            'tongyi': '#ff6a00',
+            'wenxin': '#00a0e9',
+            'kimi': '#6c5ce7',
+            'zhipu': '#00d4aa',
+            'metaso': '#1a73e8',
+            'nami': '#e91e63',
+        };
+        const platformNames = {
+            'deepseek': 'DeepSeek 深度求索',
+            'doubao': '豆包',
+            'yuanbao': '元宝',
+            'tongyi': '通义千问',
+            'wenxin': '文心一言',
+            'kimi': 'Kimi',
+            'zhipu': '智谱清言',
+            'metaso': '秘塔 AI',
+            'nami': '纳米 AI',
+        };
+        const trendIcons={rising:'\u2197',stable:'\u2192',falling:'\u2198',unknown:'?'};
+        const trendLabels={rising:'上升',stable:'稳定',falling:'下降',unknown:'未知'};
+        
         document.getElementById('citationMetricsGrid').innerHTML=metrics.map(m=>{
             const pct=m.citation_rate;
             const color=pct>=1?'#059669':pct>=0.5?'#d97706':'#dc2626';
+            const borderColor=platformColors[m.platform]||color;
+            const name=platformNames[m.platform]||m.platform;
             return `
-            <div class="phase-card" style="border-left:3px solid ${color};">
-                <div style="font-weight:600;font-size:14px;">${esc(m.platform).toUpperCase()}</div>
+            <div class="phase-card" style="border-left:3px solid ${borderColor};cursor:pointer;" 
+                 onclick="Monitor.showPlatformDetail('${esc(m.platform)}')" 
+                 title="点击查看 ${name} 详细数据">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-weight:600;font-size:14px;">${esc(name)}</span>
+                    <span style="font-size:10px;color:${borderColor};font-weight:600;background:rgba(0,0,0,0.05);padding:2px 6px;border-radius:4px;">${esc(m.platform.toUpperCase())}</span>
+                </div>
                 <div style="display:flex;align-items:baseline;gap:4px;margin:8px 0;">
                     <span style="font-size:28px;font-weight:800;color:${color}">${pct.toFixed(2)}</span>
                     <span style="font-size:12px;color:var(--text-muted);">%</span>
-                    <span>${trendIcons[m.trend]||''}</span>
+                    <span style="font-size:12px;color:${m.trend==='rising'?'#059669':m.trend==='falling'?'#dc2626':'var(--text-muted)'};" title="${trendLabels[m.trend]||'未知'}">${trendIcons[m.trend]||'?'}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);">
                     <span>提及 ${m.brand_mention_count} 次</span>
                     <span>查询 ${m.total_queries}</span>
                 </div>
-                ${m.citation_rate<0.5?`<div style="margin-top:6px;font-size:11px;color:#dc2626;">⚠ 低于阈值(0.5%)</div>`:''}
+                ${pct<0.5?`<div style="margin-top:6px;font-size:11px;color:#dc2626;">⚠ 低于阈值(0.5%)</div>`:''}
+                <div style="margin-top:8px;font-size:11px;color:var(--primary);text-align:center;">点击查看详情 →</div>
             </div>`}).join('');
 
         // 趋势摘要
         const avg=data.avg_citation_rate||0;
         const summaryEl=document.getElementById('citationTrendSummary');
         summaryEl.style.display='';
-        summaryEl.innerHTML=`<strong>\uD83D\uDCCA 摘要:</strong> 共监测 ${esc(metrics.length)} 个平台，平均引用率 <strong style="color:${avg>=1?'#059669':avg>=0.5?'#d97706':'#dc2626'}">${avg.toFixed(3)}%</strong>，整体状态：<strong>${esc(statusMap[data.overall_status])}</strong> · 检测时间：${esc(data.checked_at)||'-'} · ${data.overall_status==='FROZEN'?`<span style="color:#dc2626;">⚡ 已触发自动回滚保护机制</span>`:''}`;
+        summaryEl.innerHTML=`<strong>摘要:</strong> 共监测 ${metrics.length} 个平台，`+
+            `总提及 <strong>${data.total_brand_mentions||0}</strong> 次，`+
+            `加权平均引用率 <strong style="color:${avg>=1?'#059669':avg>=0.5?'#d97706':'#dc2626'}">${avg.toFixed(2)}%</strong>，`+
+            `整体状态：<strong>${statusMap[data.overall_status]||'未知'}</strong> · `+
+            `检测时间：${data.checked_at?data.checked_at.slice(5,16).replace('T',' '):'-'} · `+
+            `${data.overall_status==='FROZEN'?'<span style="color:#dc2626;">⚡ 已触发自动回滚保护</span>':''}`;
     },
 
     /** F2: 渲染告警中心 */
@@ -1000,10 +1119,15 @@ const Monitor = {
 
         const body=document.getElementById('alertsPanelBody');
         if(!alerts.length){
+            // 骨架屏切换
+            this._switchToReal('alertsPanelBody', 'alertsPanelBodySkeleton');
             body.innerHTML='<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">✅ 近期无告警，系统运行正常</div>';
             return;
         }
 
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('alertsPanelBody', 'alertsPanelBodySkeleton');
+        
         const sevColors={critical:'#dc2626',warning:'#d97706',info:'#2563eb'};
         const sevTags={critical:'CRITICAL',warning:'WARNING',info:'INFO'};
         body.innerHTML=alerts.map(a=>`
@@ -1023,6 +1147,9 @@ const Monitor = {
         const rs=data.rollback_state||{};
         const body=document.getElementById('rollbackPanelBody');
         const isFrozen=rs.is_frozen;
+
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('rollbackPanelBody', 'rollbackPanelBodySkeleton');
 
         body.innerHTML= isFrozen ? `
             <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
@@ -1062,9 +1189,14 @@ const Monitor = {
         document.getElementById('reportsTotalHint').textContent=`共 ${data.total} 份`;
         const body=document.getElementById('reportsPanelBody');
         if(!reports.length){
+            // 骨架屏切换
+            this._switchToReal('reportsPanelBody', 'reportsPanelBodySkeleton');
             body.innerHTML='<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">暂无监控报告。执行引用率检测后将自动生成。</div>';
             return;
         }
+
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('reportsPanelBody', 'reportsPanelBodySkeleton');
 
         const stColors={NORMAL:'#059669',DEGRADED:'#d97706',FROZEN:'#dc2626'};
         body.innerHTML=reports.map(r=>`
@@ -1083,32 +1215,194 @@ const Monitor = {
         const btn=document.getElementById('manualCheckBtn');
         btn.disabled=true;btn.textContent='⏳ 检测中...';
 
+        // 立即显示实时日志窗口
+        LogWindow.show();
+        LogWindow.log('🔄 检测已启动 - 开始执行引用率检测', 'INFO', 'System');
+
         // 更新面板为 loading 状态
         document.getElementById('citationMetricsGrid').innerHTML=
             '<div style="grid-column:1/-1;text-align:center;padding:30px 0;"><div style="animation:spin-dot 1s infinite;display:inline-block;">⏳</div><p style="color:var(--text-muted);margin-top:8px;">正在采集各平台引用率数据...</p></div>';
+        document.getElementById('citationTrendSummary').style.display='none';
 
+        // 添加初始日志
+        LogWindow.log('📋 目标: 所有已启用的 AI 平台', 'INFO', 'System');
+
+        let r = null;
         try{
-            const r=await API.post('/api/monitor/check');
+            LogWindow.log('📡 发送 POST /api/monitor/check', 'DEBUG', 'Network');
+
+            r=await API.post('/api/monitor/check');
+            
+            LogWindow.log(`📥 收到响应: status=${r.status}`, 'DEBUG', 'Network');
+
             const d=r.data||{};
 
-            if(d.error && d.status!=='error'){
-                toast('检测完成（部分数据）','warning');
-            } else if(d.status==='error'){
-                throw new Error(d.error||'检测失败');
-            }else{
-                toast(`检查完成 | 状态: ${d.status} | ${d.alerts_triggered||0} 条告警`, d.rollback_executed?'warning':'success');
+            if(!r.ok){
+                const errMsg = d.error||`请求失败 (${r.status})`;
+                LogWindow.log(`❌ 请求失败: ${errMsg}`, 'ERROR', 'System');
+                throw new Error(errMsg);
+            }
+            
+            // 用返回数据更新 UI
+            const citationData = {
+                checked_at: d.generated_at,
+                overall_status: d.status,
+                metrics: d.metrics_summary || [],
+                avg_citation_rate: d.metrics_summary?.length > 0 
+                    ? d.metrics_summary.reduce((sum, m) => sum + (m.citation_rate || 0), 0) / d.metrics_summary.length 
+                    : 0
+            };
+            this._renderCitationPanel(citationData);
+
+            // 显示详细指标日志
+            if(d.metrics_summary && d.metrics_summary.length > 0){
+                LogWindow.log('📊 各平台检测结果:', 'INFO', 'Result');
+                for(const m of d.metrics_summary){
+                    LogWindow.log(`  [${m.platform}] 引用率: ${(m.citation_rate * 100).toFixed(2)}% | 提及: ${m.brand_mention_count}/${m.total_queries}`, 'DEBUG', 'Platform');
+                }
             }
 
-            // 刷新所有面板
-            await this.load();
+            // 根据结果显示提示
+            const alertsCount = d.alerts_triggered ?? 0;
+            if(d.rollback_executed){
+                LogWindow.log(`⚠️ 触发回滚保护 | 状态: ${d.status} | ${alertsCount} 条告警`, 'WARN', 'System');
+                toast(`⚠ 检测完成 | 状态: ${d.status||'未知'} | ${alertsCount} 条告警 | 已触发回滚保护`, 'warning');
+            } else if(d.error){
+                toast(`检测完成（部分数据）: ${d.error}`, 'warning');
+            } else {
+                LogWindow.log(`✅ 检测完成 | 状态: ${d.status} | ${alertsCount} 条告警`, 'INFO', 'Summary');
+                toast(`✅ 检测完成 | 状态: ${d.status||'正常'} | ${alertsCount} 条告警`, 'success');
+            }
+
+            // 完成标记
+            LogWindow.log('🎉 检测流程结束', 'INFO', 'System');
 
         }catch(e){
-            toast('检测失败: '+e.message,'error');
+            LogWindow.log(`❌ 检测失败: ${e.message}`, 'ERROR', 'System');
+            toast('检测失败: '+e.message, 'error');
             document.getElementById('citationMetricsGrid').innerHTML=
                 '<div style="grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0;">❌ 检测失败，请检查服务日志</div>';
         }finally{
             btn.disabled=false;btn.textContent='🔍 执行引用率检测';
         }
+    },
+
+    /** 显示 Debug 日志弹窗 */
+    _showDebugLogModal(debugLogs, isLoading = false){
+        // 移除已存在的弹窗
+        const existing = document.getElementById('debugLogModal');
+        if(existing) existing.remove();
+
+        const html = `
+        <div id="debugLogModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:2000;display:flex;align-items:center;justify-content:center;" onclick="Monitor._closeDebugLogModal(event)">
+            <div style="background:white;border-radius:16px;width:95%;max-width:800px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);" onclick="event.stopPropagation()">
+                <!-- 头部 -->
+                <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:24px;">🔧</span>
+                        <div>
+                            <h3 style="margin:0;font-size:16px;font-weight:600;">实时调试日志</h3>
+                            <div style="font-size:11px;color:var(--text-muted);" id="debugLogCount">等待检测开始...</div>
+                        </div>
+                    </div>
+                    <button onclick="Monitor._closeDebugLogModal()" style="width:32px;height:32px;border-radius:50%;border:none;background:var(--gray-100);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">×</button>
+                </div>
+                
+                <!-- 日志内容 -->
+                <div id="debugLogContent" style="flex:1;overflow:auto;padding:16px 20px;background:#f8fafc;min-height:400px;">
+                    ${isLoading ? '<div style="text-align:center;padding:40px;color:var(--text-muted);"><div style="animation:spin-dot 1s infinite;display:inline-block;font-size:24px;">⏳</div><p style="margin-top:12px;">正在与各 AI 平台交互...</p></div>' : ''}
+                </div>
+                
+                <!-- 底部状态栏 -->
+                <div style="padding:10px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#f1f5f9;">
+                    <div style="font-size:11px;color:#64748b;">
+                        <span id="debugLogStatus">${isLoading ? '🔄 检测进行中...' : '✅ 检测完成'}</span>
+                    </div>
+                    <button onclick="Monitor._closeDebugLogModal()" style="padding:6px 16px;border-radius:6px;border:none;background:#2563eb;color:white;cursor:pointer;font-size:12px;font-weight:500;">关闭</button>
+                </div>
+            </div>
+        </div>`;
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        
+        // 如果有初始日志，渲染它们
+        if(debugLogs.length > 0){
+            this._renderDebugLogs(debugLogs);
+        }
+    },
+
+    /** 追加单条日志 */
+    _appendDebugLog(message, level, step, data){
+        const content = document.getElementById('debugLogContent');
+        if(!content) return;
+
+        const levelColors = {
+            'DEBUG': {bg: '#f1f5f9', text: '#64748b', border: '#e2e8f0'},
+            'INFO': {bg: '#e0f2fe', text: '#0369a1', border: '#bae6fd'},
+            'WARN': {bg: '#fef3c7', text: '#92400e', border: '#fde68a'},
+            'ERROR': {bg: '#fef2f2', text: '#991b1b', border: '#fecaca'}
+        };
+        const colors = levelColors[level] || levelColors['DEBUG'];
+
+        const stepIcons = {
+            'System': '⚙️',
+            'Network': '🌐',
+            'Platform': '🤖',
+            'Result': '📊',
+            'Summary': '📋'
+        };
+        const icon = stepIcons[step] || '📌';
+
+        const dataStr = data && Object.keys(data).length > 0 
+            ? `<div style="margin-top:8px;padding:10px;background:white;border-radius:6px;font-size:11px;line-height:1.6;color:#475569;border-left:3px solid ${colors.border};max-height:150px;overflow:auto;">${Object.entries(data).map(([k,v]) => `<div><strong style="color:#0369a1;">${k}:</strong> ${typeof v === 'object' ? JSON.stringify(v, null, 2) : v}</div>`).join('')}</div>` 
+            : '';
+
+        const time = new Date().toLocaleTimeString('zh-CN', {hour12: false}) + '.' + String(Date.now() % 1000).padStart(3, '0');
+        
+        const logHtml = `
+        <div style="margin-bottom:12px;padding:12px;background:${colors.bg};border-radius:8px;border-left:4px solid ${colors.text};animation:_fadeIn 0.3s ease;">
+            <div style="display:flex;align-items:flex-start;gap:10px;">
+                <span style="font-size:18px;">${icon}</span>
+                <div style="flex:1;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                        <span style="font-size:10px;color:#94a3b8;font-family:monospace;">${time}</span>
+                        <span style="font-size:10px;color:white;font-weight:600;background:${colors.text};padding:2px 8px;border-radius:4px;">${level}</span>
+                        <span style="font-size:11px;font-weight:600;color:#334155;">${step}</span>
+                    </div>
+                    <div style="font-size:13px;color:#1e293b;line-height:1.5;word-break:break-all;">${esc(message)}</div>
+                    ${dataStr}
+                </div>
+            </div>
+        </div>`;
+
+        // 移除 loading 状态
+        const loadingDiv = content.querySelector('.loading-state');
+        if(loadingDiv) loadingDiv.remove();
+
+        content.insertAdjacentHTML('beforeend', logHtml);
+        
+        // 自动滚动到底部
+        content.scrollTop = content.scrollHeight;
+        
+        // 更新计数
+        const countEl = document.getElementById('debugLogCount');
+        const statusEl = document.getElementById('debugLogStatus');
+        if(countEl) countEl.textContent = `日志条数: ${content.children.length}`;
+        if(statusEl) statusEl.textContent = '🔄 检测进行中...';
+    },
+
+    /** 渲染多条日志 */
+    _renderDebugLogs(debugLogs){
+        for(const log of debugLogs){
+            this._appendDebugLog(log.message, log.level, log.step, log.data);
+        }
+    },
+
+    /** 关闭 Debug 日志弹窗 */
+    _closeDebugLogModal(e){
+        if(e && e.target !== e.currentTarget) return;
+        const modal = document.getElementById('debugLogModal');
+        if(modal) modal.remove();
     },
 
     /** 单独刷新回滚状态 */
@@ -1119,6 +1413,243 @@ const Monitor = {
         }catch(e){toast('刷新失败:'+e.message,'error');}
     },
 
+    /** 显示平台详情弹窗 */
+    showPlatformDetail(platform){
+        const data = this._citationData;
+        if(!data || !data.metrics) return;
+        
+        const m = data.metrics.find(x=>x.platform===platform);
+        if(!m) return;
+
+        const platformNames = {
+            'deepseek': 'DeepSeek 深度求索',
+            'doubao': '豆包',
+            'yuanbao': '元宝',
+            'tongyi': '通义千问',
+            'wenxin': '文心一言',
+            'kimi': 'Kimi',
+            'zhipu': '智谱清言',
+            'metaso': '秘塔 AI',
+            'nami': '纳米 AI',
+        };
+        const platformColors = {
+            'deepseek': '#0066cc','doubao': '#4a90d9','yuanbao': '#ff6b35',
+            'tongyi': '#ff6a00','wenxin': '#00a0e9','kimi': '#6c5ce7',
+            'zhipu': '#00d4aa','metaso': '#1a73e8','nami': '#e91e63',
+        };
+        const trendLabels={rising:'📈 上升',stable:'➡️ 稳定',falling:'📉 下降',unknown:'❓ 未知'};
+        const trendTips={
+            rising:'该平台对您内容的引用率正在增长，表现良好',
+            stable:'该平台引用率维持稳定，建议持续优化内容质量',
+            falling:'引用率下降，建议检查内容是否被更新或需要优化',
+            unknown:'趋势未知，需要更多数据积累'
+        };
+
+        const name=platformNames[platform]||platform;
+        const color=platformColors[platform]||'#666';
+        const pct=m.citation_rate;
+        const healthColor=pct>=1?'#059669':pct>=0.5?'#d97706':'#dc2626';
+        const healthLabel=pct>=1?'✅ 健康':pct>=0.5?'⚠️ 需关注':'🚨 告警';
+        const healthTip=pct>=1?'引用率处于健康水平':pct>=0.5?'引用率偏低，建议优化内容':pct>0?'引用率过低，建议检查内容分发状态':'该平台暂无引用数据';
+
+        const html=`
+        <div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;" onclick="Monitor.closeModal(event)">
+            <div style="background:white;border-radius:16px;width:90%;max-width:560px;max-height:85vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);" onclick="event.stopPropagation()">
+                <!-- 头部 -->
+                <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+                    <div style="width:48px;height:48px;border-radius:12px;background:${color};display:flex;align-items:center;justify-content:center;color:white;font-size:20px;font-weight:700;">${platform.charAt(0).toUpperCase()}</div>
+                    <div style="flex:1;">
+                        <h2 style="margin:0;font-size:18px;font-weight:600;">${esc(name)}</h2>
+                        <div style="font-size:12px;color:var(--text-muted);">${esc(platform.toUpperCase())} · 检测时间: ${data.checked_at?data.checked_at.replace('T',' ').slice(0,19):'-'}</div>
+                    </div>
+                    <button onclick="Monitor.closeModal()" style="width:32px;height:32px;border-radius:50%;border:none;background:var(--gray-100);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">×</button>
+                </div>
+                
+                <!-- 核心指标 -->
+                <div style="padding:20px 24px;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+                        <!-- 引用率 -->
+                        <div style="background:linear-gradient(135deg,${healthColor}15 0%,${healthColor}08 100%);border-radius:12px;padding:20px;text-align:center;border:1px solid ${healthColor}30;">
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">引用率</div>
+                            <div style="font-size:42px;font-weight:800;color:${healthColor};line-height:1;">${pct.toFixed(2)}<span style="font-size:18px;">%</span></div>
+                            <div style="margin-top:8px;font-size:12px;color:${healthColor};font-weight:600;">${healthLabel}</div>
+                        </div>
+                        <!-- 品牌提及 -->
+                        <div style="background:#f0f9ff;border-radius:12px;padding:20px;text-align:center;border:1px solid #bae6fd;">
+                            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">品牌提及次数</div>
+                            <div style="font-size:42px;font-weight:800;color:#0369a1;line-height:1;">${m.brand_mention_count}</div>
+                            <div style="margin-top:8px;font-size:12px;color:#0369a1;">次</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 指标说明 -->
+                    <div style="background:#f8fafc;border-radius:10px;padding:14px;margin-bottom:16px;border:1px solid #e2e8f0;">
+                        <div style="font-weight:600;color:#475569;font-size:13px;margin-bottom:12px;">📖 指标计算说明</div>
+                        <div style="display:grid;gap:10px;font-size:12px;line-height:1.6;">
+                            <div>
+                                <span style="font-weight:600;color:#0369a1;">引用率 = 品牌提及次数 ÷ 总查询数 × 100%</span>
+                                <div style="color:#64748b;margin-top:2px;">该平台搜索结果中，包含"松江招聘"相关内容的比例。引用率越高，说明该平台对您的内容收录越好。</div>
+                            </div>
+                            <div>
+                                <span style="font-weight:600;color:#0369a1;">品牌提及次数 = ${m.brand_mention_count}</span>
+                                <div style="color:#64748b;margin-top:2px;">在 ${m.total_queries} 次搜索中，提及"松江"相关信息的网页/内容数量。这些内容被 AI 搜索系统索引，可能在用户查询时作为参考来源。</div>
+                            </div>
+                            <div>
+                                <span style="font-weight:600;color:#0369a1;">被引用的是什么？</span>
+                                <div style="color:#64748b;margin-top:2px;">被引用的是您的"松江招聘"岗位信息网页。当用户在 ${name} 搜索相关关键词时，AI 可能参考这些网页的内容来生成回答。</div>
+                            </div>
+                            <div>
+                                <span style="font-weight:600;color:#0369a1;">谁在引用？</span>
+                                <div style="color:#64748b;margin-top:2px;">${name}（${platform.toUpperCase()}）是 AI 搜索引擎。它会将您的内容作为知识来源，在回答用户问题时引用。</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 健康状态解读 -->
+                    <div style="background:#fef3c7;border-radius:10px;padding:14px;margin-bottom:16px;">
+                        <div style="display:flex;align-items:flex-start;gap:10px;">
+                            <span style="font-size:20px;">💡</span>
+                            <div>
+                                <div style="font-weight:600;color:#92400e;font-size:13px;">${healthTip}</div>
+                                <div style="font-size:12px;color:#a16207;margin-top:4px;">${healthLabel === '✅ 健康' ? '当前引用率≥1%，表示该平台对您的松江招聘内容有良好引用' : healthLabel === '⚠️ 需关注' ? '建议优化岗位描述，增加 GEO 合规内容以提升引用率' : '建议检查内容是否成功分发，或联系平台确认收录情况'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 详细数据 -->
+                    <h4 style="margin:0 0 12px;font-size:14px;font-weight:600;">📊 详细指标</h4>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                        <div style="background:var(--gray-50);border-radius:8px;padding:14px;">
+                            <div style="font-size:11px;color:var(--text-muted);">总查询数</div>
+                            <div style="font-size:20px;font-weight:600;margin-top:4px;">${m.total_queries}</div>
+                            <div style="font-size:10px;color:#94a3b8;margin-top:4px;">检测时搜索的网页总数</div>
+                        </div>
+                        <div style="background:var(--gray-50);border-radius:8px;padding:14px;">
+                            <div style="font-size:11px;color:var(--text-muted);">趋势</div>
+                            <div style="font-size:16px;font-weight:600;margin-top:4px;color:${m.trend==='rising'?'#059669':m.trend==='falling'?'#dc2626':'var(--text)'}">${trendLabels[m.trend]||'未知'}</div>
+                            <div style="font-size:10px;color:#94a3b8;margin-top:4px;">近7天引用率变化</div>
+                        </div>
+                        <div style="background:var(--gray-50);border-radius:8px;padding:14px;">
+                            <div style="font-size:11px;color:var(--text-muted);">告警阈值</div>
+                            <div style="font-size:20px;font-weight:600;margin-top:4px;">0.5%</div>
+                            <div style="font-size:10px;color:#94a3b8;margin-top:4px;">低于此值触发告警</div>
+                        </div>
+                        <div style="background:var(--gray-50);border-radius:8px;padding:14px;">
+                            <div style="font-size:11px;color:var(--text-muted);">最后检测</div>
+                            <div style="font-size:14px;font-weight:600;margin-top:4px;">${m.last_check_time?m.last_check_time.slice(0,16).replace('T',' '):'-'}</div>
+                            <div style="font-size:10px;color:#94a3b8;margin-top:4px;">最近一次检测时间</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 查询说明 -->
+                    <div style="background:#fff7ed;border-radius:8px;padding:12px;margin-bottom:16px;font-size:11px;color:#9a3412;line-height:1.5;">
+                        <div style="font-weight:600;margin-bottom:4px;">🔍 本次检测查询了这些内容：</div>
+                        <div style="margin-left:12px;">搜索关键词：<strong>"松江招聘"、"松江找工作"、"松江求职"</strong> 等相关词</div>
+                        <div style="margin-left:12px;">检测范围：该平台搜索结果中包含松江招聘信息的网页</div>
+                    </div>
+                    
+                    <!-- 趋势解读 -->
+                    <div style="background:#f0fdf4;border-radius:10px;padding:14px;margin-bottom:16px;">
+                        <div style="display:flex;align-items:flex-start;gap:10px;">
+                            <span style="font-size:20px;">${m.trend==='rising'?'📈':m.trend==='falling'?'📉':'➡️'}</span>
+                            <div>
+                                <div style="font-weight:600;color:#166534;font-size:13px;">趋势解读: ${trendLabels[m.trend]||'未知'}</div>
+                                <div style="font-size:12px;color:#15803d;margin-top:4px;">${trendTips[m.trend]||trendTips.unknown}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 建议 -->
+                    <h4 style="margin:0 0 12px;font-size:14px;font-weight:600;">💡 优化建议</h4>
+                    <div style="background:var(--gray-50);border-radius:10px;padding:14px;font-size:13px;line-height:1.7;">
+                        ${pct>=1?`<p style="margin:0 0 8px;">✅ 继续保持！建议定期更新岗位内容，保持引用率稳定。</p>`:''}
+                        ${pct>=0.5&&pct<1?`<p style="margin:0 0 8px;">📝 建议优化方向：</p><ul style="margin:0;padding-left:20px;"><li>增强岗位描述的 GEO 合规性</li><li>增加关键词密度和自然度</li><li>确保 Schema 结构化数据完整</li></ul>`:''}
+                        ${pct<0.5?`<p style="margin:0 0 8px;">🚨 急需优化：</p><ul style="margin:0;padding-left:20px;"><li>检查内容是否成功分发到该平台</li><li>重新生成并推送岗位数据</li><li>提升内容质量和 GEO 合规性</li><li>考虑联系平台确认收录状态</li></ul>`:''}
+                    </div>
+                    
+                    <!-- 引用详情（关键词、来源、场景） -->
+                    <h4 style="margin:16px 0 12px;font-size:14px;font-weight:600;">🔗 引用详情</h4>
+                    <div style="background:#f0fdf4;border-radius:10px;padding:14px;font-size:13px;">
+                        <!-- 被引用的关键词 -->
+                        <div style="margin-bottom:14px;">
+                            <div style="font-weight:600;color:#166534;margin-bottom:8px;">📌 被引用的关键词</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                ${(m.cited_keywords||[]).map(kw=>`<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:12px;font-size:11px;">${esc(kw)}</span>`).join('')}
+                                ${!(m.cited_keywords&&m.cited_keywords.length)?'<span style="color:#94a3b8;font-size:12px;">暂无数据</span>':''}
+                            </div>
+                            <div style="margin-top:8px;font-size:11px;color:#64748b;">这些是触发引用的搜索关键词，AI 在搜索这些词时参考了您的内容</div>
+                        </div>
+                        
+                        <!-- 被引用的来源 -->
+                        <div style="margin-bottom:14px;">
+                            <div style="font-weight:600;color:#166534;margin-bottom:8px;">📄 被引用的来源</div>
+                            <div style="display:grid;gap:8px;">
+                                ${(m.cited_sources||[]).map(src=>`
+                                    <div style="background:white;border-radius:8px;padding:10px;border:1px solid #bbf7d0;">
+                                        <div style="font-weight:600;color:#1e293b;font-size:12px;">${esc(src.title||'松江招聘岗位')}</div>
+                                        <a href="${esc(src.url||'#')}" target="_blank" style="color:#2563eb;font-size:11px;word-break:break-all;">${esc(src.url||'').slice(0,60)}${src.url&&src.url.length>60?'...':''}</a>
+                                        ${src.snippet?`<div style="margin-top:4px;font-size:11px;color:#64748b;">${esc(src.snippet)}</div>`:''}
+                                        ${src.relevance_score?`<div style="margin-top:4px;"><span class="tag tag-green" style="font-size:10px;">相关度 ${(src.relevance_score*100).toFixed(0)}%</span></div>`:''}
+                                    </div>
+                                `).join('')}
+                                ${!(m.cited_sources&&m.cited_sources.length)?'<span style="color:#94a3b8;font-size:12px;">暂无引用来源数据</span>':''}
+                            </div>
+                        </div>
+                        
+                        <!-- 引用场景 -->
+                        ${(m.citation_contexts||[]).length>0?`
+                        <div>
+                            <div style="font-weight:600;color:#166534;margin-bottom:8px;">💬 引用场景</div>
+                            ${(m.citation_contexts||[]).map(ctx=>`
+                                <div style="background:white;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid #bbf7d0;">
+                                    <div style="margin-bottom:6px;">
+                                        <span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:4px;font-size:11px;">搜索词</span>
+                                        <span style="margin-left:6px;font-weight:600;color:#1e293b;">"${esc(ctx.query||'')}"</span>
+                                    </div>
+                                    ${ctx.response_snippet?`<div style="font-size:12px;color:#475569;line-height:1.5;padding:8px;background:#f8fafc;border-radius:6px;">${esc(ctx.response_snippet)}</div>`:''}
+                                    ${ctx.ai_platform?`<div style="margin-top:6px;font-size:11px;color:#64748b;">AI 平台：${esc(ctx.ai_platform)}</div>`:''}
+                                    ${ctx.cited_urls&&ctx.cited_urls.length>0?`<div style="margin-top:4px;font-size:11px;color:#64748b;">引用链接：${ctx.cited_urls.map(u=>`<a href="${esc(u)}" target="_blank" style="color:#2563eb;">链接</a>`).join(', ')}</div>`:''}
+                                </div>
+                            `).join('')}
+                        </div>`:''}
+                    </div>
+                </div>
+                
+                <!-- 底部操作 -->
+                <div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;">
+                    <button onclick="Monitor.closeModal()" style="padding:10px 20px;border-radius:8px;border:1px solid var(--border);background:white;cursor:pointer;font-size:13px;">关闭</button>
+                    <button onclick="Monitor.checkSinglePlatform('${esc(platform)}')" style="padding:10px 20px;border-radius:8px;border:none;background:#2563eb;color:white;cursor:pointer;font-size:13px;font-weight:500;">🔍 重新检测此平台</button>
+                </div>
+            </div>
+        </div>`;
+
+        // 创建弹窗
+        const modal=document.createElement('div');
+        modal.id='platformDetailModal';
+        modal.innerHTML=html;
+        document.body.appendChild(modal);
+    },
+
+    /** 关闭弹窗 */
+    closeModal(e){
+        if(e && e.target!==e.currentTarget) return;
+        const m=document.getElementById('platformDetailModal');
+        if(m) m.remove();
+    },
+
+    /** 单平台检测 */
+    async checkSinglePlatform(platform){
+        this.closeModal();
+        toast(`正在检测 ${platform}...`, 'info');
+        try{
+            await API.get(`/api/monitor/citation?platform=${platform}`);
+            toast(`✅ ${platform} 检测完成`, 'success');
+            await this.load();
+        }catch(e){
+            toast('检测失败: '+e.message, 'error');
+        }
+    },
+
     /* ===== 保留原有基础统计渲染逻辑 ===== */
 
     _renderBasicStats(sr, str){
@@ -1126,21 +1657,20 @@ const Monitor = {
         const sys=s.system||{};const db=s.database||{};
         const exec=s.execution||{}; // 历史记录由 _renderHistory 单独处理
 
-        // 核心指标卡片 (精简版)
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('monitorCards', 'monitorCardsSkeleton');
+
+        // 业务指标卡片
         document.getElementById('monitorCards').innerHTML=[
             { icon:'💼', title:'活跃岗位', value:s.total_active||0, sub:'待处理岗位数' },
-            { icon:'✅', title:'合规通过率', value:`${exec.success_rate||0}%`, sub:`共${exec.total_executions||0}次执行` },
-            { icon:'🔥', title:'急招岗位', value:s.urgent_count||0, sub:'优先推送到AI平台' },
-            { icon:'🕐', title:'平均耗时', value:`${exec.avg_duration||0}s`, sub:'最近一次流水线' },
-            { icon:'🗄️', title:'数据库', value:db.connected?'已连接':'未连接', sub:db.database||'-', cls:db.connected?'done':'pending' },
-            { icon:'🐍', title:'Python', value:`v${sys.python_version||'-'}`, sub:sys.platform||'-' },
+            { icon:'🔥', title:'急招岗位', value:s.urgent_count||0, sub:'优先推送AI' },
+            { icon:'✅', title:'合规通过率', value:`${exec.success_rate||0}%`, sub:`${exec.total_executions||0}次执行` },
         ].map(c=>`
             <div class="phase-card">
                 <div class="phase-icon">${c.icon}</div>
                 <div class="phase-title">${c.title}</div>
                 <div style="font-size:22px;font-weight:700;margin:6px 0 2px;">${c.value}</div>
                 <div style="font-size:11px;color:var(--text-muted);">${c.sub}</div>
-                ${c.cls?`<div class="phase-status ${c.cls}" style="margin-top:6px">${c.cls==='done'?'● 正常':'○ 待配置'}</div>`:''}
             </div>
         `).join('');
 
@@ -1175,7 +1705,16 @@ const Monitor = {
 
         const listEl=document.getElementById('historyList');
         // emptyEl 由 toggleEl('historyEmpty') 内部查找，此处保留引用以备扩展
-        if(filtered.length===0){listEl.innerHTML='';toggleEl('historyEmpty',true);return;}
+        if(filtered.length===0){
+            // 骨架屏切换
+            this._switchToReal('historyList', 'historyListSkeleton');
+            listEl.innerHTML='';
+            toggleEl('historyEmpty',true);
+            return;
+        }
+        
+        // 骨架屏切换：隐藏骨架，显示真实容器
+        this._switchToReal('historyList', 'historyListSkeleton');
         toggleEl('historyEmpty',false);
 
         const labels={pipeline:'Pipeline',db:'Database',import:'Import'};
@@ -1222,7 +1761,7 @@ const Monitor = {
 // ============================================================
 //  PAGE 5: CONFIG（动态配置系统）
 // ============================================================
-const Config = {
+var Config = window.Config = {
     _schema: null,          // 完整配置 schema
     _groups: null,          // 分组列表
     _currentGroup: 'SITE',   // 当前激活的分组
@@ -1332,7 +1871,7 @@ const Config = {
         const inputId = 'cf-' + key;
 
         let controlHtml = '';
-        const type_ = (f.type_ || 'STRING').toUpperCase();
+        const type_ = (f.type || 'STRING').toUpperCase(); // 后端用 type，前端读取 type
 
         switch (type_) {
             case 'PASSWORD':
@@ -1386,6 +1925,21 @@ const Config = {
                            value="${this._escAttr(val)}" placeholder="${this._escAttr(placeholder)}"
                            class="input cfg-input" readonly style="background:var(--gray-50);">
                     <button type="button" class="btn-outline btn-sm" onclick="Config._pickPath('${inputId}')" style="flex-shrink:0;">浏览...</button>
+                </div>`;
+                break;
+
+            case 'ACTION':
+                // 特殊处理：操作按钮类型（如清理数据）
+                const btnLabel = f.label || '执行操作';
+                const btnStyle = key.includes('clear') || key.includes('delete') || key.includes('danger')
+                    ? 'btn-danger btn-sm'
+                    : 'btn-primary btn-sm';
+                controlHtml = `<div style="display:flex;align-items:center;gap:12px;">
+                    <button type="button" class="${btnStyle}" 
+                            onclick="Config.executeAction('${key}', this)">
+                        ${btnLabel}
+                    </button>
+                    <span id="action-status-${key.replace(/\./g, '_')}" style="font-size:12px;color:var(--text-muted);"></span>
                 </div>`;
                 break;
 
@@ -1629,6 +2183,56 @@ const Config = {
         }
     },
 
+    /** [危险] 一键清理所有业务数据 */
+    async clearBusinessData(e){
+        // 二次确认
+        if(!confirm('⚠️ 确认要清理所有业务数据吗？\n\n此操作将删除：\n• 所有岗位数据\n• uploads/ 目录文件\n• audit_logs/ 审计记录\n• dist/ 分发结果\n\n⚠️ 此操作不可逆！\n\n建议：操作前先导出配置备份')){
+            return;
+        }
+        
+        // 三次确认（输入确认词）
+        const confirmPhrase = prompt('请输入 "确认清理" 以继续：');
+        if(confirmPhrase !== '确认清理'){
+            toast('已取消清理操作', 'info');
+            return;
+        }
+
+        const btn = e?.target || document.querySelector('[onclick*="clearBusinessData"]');
+        if(btn){ btn.disabled = true; btn.textContent = '⏳ 清理中...'; }
+
+        try{
+            const r = await API.post('/api/data/cleanup', {});
+            const d = r.data || {};
+
+            if(d.success){
+                const msg = `✅ 清理完成！共删除 ${d.deleted_jobs || 0} 条岗位，清理了 ${d.deleted_files || 0} 个文件`;
+                toast(msg, 'success');
+                
+                // 刷新岗位列表（如果有的话）
+                if(typeof Jobs !== 'undefined' && Jobs.load){
+                    setTimeout(() => Jobs.load(1), 500);
+                }
+            } else {
+                throw new Error(d.error || '清理失败');
+            }
+        }catch(e){
+            toast('清理失败: ' + (e.message || '未知错误'), 'error');
+        }finally{
+            if(btn){ btn.disabled = false; btn.textContent = '🗑️ 清理业务数据'; }
+        }
+    },
+
+    /** 执行配置操作按钮 */
+    async executeAction(key, btn){
+        if(key === 'advanced.clear_business_data'){
+            await this.clearBusinessData({ target: btn });
+            return;
+        }
+        
+        // 其他操作可在此扩展
+        toast('未知操作: ' + key, 'warning');
+    },
+
     /** [L-05] PATH 字段文件选择 — 使用原生 file input 选择路径 */
     _pickPath(inputId) {
         const input = document.createElement('input');
@@ -1749,7 +2353,7 @@ const GEOFramework = {
 // ============================================================
 //  PAGE 7: GEO 审计评分
 // ============================================================
-const GEOAudit = {
+var GEOAudit = window.GEOAudit = {
     _lastAuditResult: null,  // [A1] 缓存最近一次审计结果
     _lastJobId: null,        // [A1] 最近审计的岗位ID
     _auditBusy: false,       // [防重复点击] 审计执行锁
@@ -2152,6 +2756,233 @@ window.copySchema = ()=>Schema.copy();
 window.switchPage = switchPage;
 
 
+// ==================== 关键词动态配置 ====================
+var Keywords = window.Keywords = {
+    _searchQueries: [],
+    _brandKeywords: [],
+    _pendingImport: null,  // 待确认导入的数据
+
+    /** 加载关键词配置（从岗位数据自动提取） */
+    async load() {
+        try {
+            const r = await API.get('/api/keywords');
+            if (r.ok && r.data && r.data.success) {
+                const data = r.data.data;
+                this._searchQueries = data.search_queries || [];
+                this._brandKeywords = data.brand_keywords || [];
+                this._render();
+
+                const sourceText = data.source === 'auto' ? '从岗位数据自动提取' :
+                                   data.source === 'config' ? '从配置文件加载' : '默认词库';
+                document.getElementById('keywordsStatus').innerHTML =
+                    `<span style="color:#059669;">✓</span> ${this._searchQueries.length} 个搜索词, ${this._brandKeywords.length} 个品牌词 | ${sourceText}`;
+            } else {
+                document.getElementById('keywordsStatus').innerHTML =
+                    `<span style="color:#dc2626;">✗</span> 加载失败: ${r.data?.message || '未知错误'}`;
+            }
+        } catch (e) {
+            console.error('[Keywords] load error:', e);
+            document.getElementById('keywordsStatus').innerHTML =
+                `<span style="color:#dc2626;">✗</span> 加载失败: ${e.message}`;
+        }
+    },
+
+    /** 重新从岗位数据提取关键词 */
+    async refresh() {
+        try {
+            document.getElementById('keywordsStatus').textContent = '正在从岗位数据提取关键词...';
+            const r = await API.post('/api/keywords/refresh', {});
+            if (r.ok && r.data && r.data.success) {
+                toast('关键词已从岗位数据重新提取！', 'success');
+                await this.load();
+            } else {
+                toast('刷新失败: ' + (r.data?.message || '未知错误'), 'error');
+            }
+        } catch (e) {
+            console.error('[Keywords] refresh error:', e);
+            toast('刷新失败: ' + e.message, 'error');
+        }
+    },
+
+    /** 渲染关键词标签列表 */
+    _render() {
+        // 渲染搜索关键词
+        const sqEditor = document.getElementById('searchQueriesEditor');
+        sqEditor.innerHTML = this._searchQueries.length > 0
+            ? this._searchQueries.map((kw, i) => this._tagHtml(kw, 'search', i)).join('')
+            : '<p style="color:var(--text-muted);padding:16px;">暂无搜索关键词，请先上传岗位数据</p>';
+        document.getElementById('searchQueriesCount').textContent = `${this._searchQueries.length} 个`;
+
+        // 渲染品牌关键词
+        const bkEditor = document.getElementById('brandKeywordsEditor');
+        bkEditor.innerHTML = this._brandKeywords.length > 0
+            ? this._brandKeywords.map((kw, i) => this._tagHtml(kw, 'brand', i)).join('')
+            : '<p style="color:var(--text-muted);padding:16px;">暂无品牌关键词，请先上传岗位数据</p>';
+        document.getElementById('brandKeywordsCount').textContent = `${this._brandKeywords.length} 个`;
+    },
+
+    /** 生成单个关键词标签 HTML */
+    _tagHtml(kw, type, index) {
+        const bgColor = type === 'search' ? 'var(--blue-light, #e0f2fe)' : 'var(--orange-light, #fef3c7)';
+        const textColor = type === 'search' ? '#0369a1' : '#b45309';
+        return `<div class="kw-tag" style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;background:${bgColor};color:${textColor};border-radius:16px;font-size:13px;margin:4px;">
+            <span>${this._escHtml(kw)}</span>
+            <button onclick="Keywords.removeKeyword('${type}', ${index})" style="background:none;border:none;cursor:pointer;color:${textColor};opacity:0.6;font-size:16px;line-height:1;padding:0;">×</button>
+        </div>`;
+    },
+
+    /** 转义 HTML 特殊字符 */
+    _escHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    },
+
+    /** 添加搜索关键词 */
+    addSearchQuery() {
+        const input = document.getElementById('newSearchQuery');
+        const kw = input.value.trim();
+        if (kw && !this._searchQueries.includes(kw)) {
+            this._searchQueries.push(kw);
+            this._render();
+        }
+        input.value = '';
+    },
+
+    /** 添加品牌关键词 */
+    addBrandKeyword() {
+        const input = document.getElementById('newBrandKeyword');
+        const kw = input.value.trim();
+        if (kw && !this._brandKeywords.includes(kw)) {
+            this._brandKeywords.push(kw);
+            this._render();
+        }
+        input.value = '';
+    },
+
+    /** 删除关键词 */
+    removeKeyword(type, index) {
+        if (type === 'search') {
+            this._searchQueries.splice(index, 1);
+        } else {
+            this._brandKeywords.splice(index, 1);
+        }
+        this._render();
+    },
+
+    /** 清空搜索关键词 */
+    clearSearchQueries() {
+        if (confirm('确定要清空所有搜索关键词吗？')) {
+            this._searchQueries = [];
+            this._render();
+        }
+    },
+
+    /** 清空品牌关键词 */
+    clearBrandKeywords() {
+        if (confirm('确定要清空所有品牌关键词吗？')) {
+            this._brandKeywords = [];
+            this._render();
+        }
+    },
+
+    /** 处理文件上传 */
+    handleFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            const lines = content.split(/\r?\n/).filter(l => l.trim());
+
+            // 判断是否为 CSV 格式
+            const isCSV = lines[0] && lines[0].includes(',');
+            let searchQueries = [], brandKeywords = [];
+
+            if (isCSV) {
+                // CSV 格式: keyword,type
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+                    if (i === 0 && line.toLowerCase().includes('keyword')) continue; // 跳过表头
+                    const parts = line.split(',');
+                    const kw = parts[0].trim();
+                    const type = parts[1]?.trim().toLowerCase() || 'search_query';
+                    if (kw) {
+                        if (type === 'brand_keyword') {
+                            brandKeywords.push(kw);
+                        } else {
+                            searchQueries.push(kw);
+                        }
+                    }
+                }
+            } else {
+                // TXT 格式: 根据选择的类型决定
+                const importType = document.getElementById('importKeywordType').value;
+                for (const line of lines) {
+                    const kw = line.trim();
+                    if (kw) {
+                        if (importType === 'brand_keyword') {
+                            brandKeywords.push(kw);
+                        } else {
+                            searchQueries.push(kw);
+                        }
+                    }
+                }
+            }
+
+            // 显示预览
+            this._pendingImport = { searchQueries, brandKeywords };
+            const preview = document.getElementById('uploadPreview');
+            const previewCount = document.getElementById('uploadPreviewCount');
+            preview.style.display = 'block';
+            previewCount.textContent = `将导入 ${searchQueries.length} 个搜索词，${brandKeywords.length} 个品牌词`;
+        };
+        reader.readAsText(file);
+
+        // 清空 input 以便重复选择同一文件
+        event.target.value = '';
+    },
+
+    /** 确认导入 */
+    confirmImport() {
+        if (!this._pendingImport) return;
+        this._searchQueries = this._pendingImport.searchQueries;
+        this._brandKeywords = this._pendingImport.brandKeywords;
+        this._pendingImport = null;
+        document.getElementById('uploadPreview').style.display = 'none';
+        this._render();
+        toast('导入成功！请点击"保存配置"以保存更改。', 'success');
+    },
+
+    /** 保存配置 */
+    async save() {
+        try {
+            document.getElementById('keywordsStatus').textContent = '正在保存...';
+            const r = await API.post('/api/keywords/save', {
+                search_queries: this._searchQueries,
+                brand_keywords: this._brandKeywords,
+                save_to_db: false
+            });
+
+            if (r.ok && r.data && r.data.success) {
+                document.getElementById('keywordsStatus').textContent =
+                    `已保存: ${r.data.message}`;
+                toast('关键词配置已保存！', 'success');
+            } else {
+                document.getElementById('keywordsStatus').textContent = '保存失败: ' + (r.data?.message || '未知错误');
+                toast('保存失败: ' + (r.data?.message || '未知错误'), 'error');
+            }
+        } catch (e) {
+            console.error('[Keywords] save error:', e);
+            document.getElementById('keywordsStatus').textContent = '保存失败: ' + e.message;
+            toast('保存失败: ' + e.message, 'error');
+        }
+    }
+};
+
+
 // ==================== 初始化 ====================
 (function init(){
     applyTheme();
@@ -2163,7 +2994,7 @@ window.switchPage = switchPage;
     });
 
     // [A-03] 全局键盘快捷键导航 (Alt+数字快速切换页面)
-    const pageMap = {'1':'workflow','2':'jobs','3':'geo-framework','4':'geo-audit','5':'schema','6':'monitor','7':'config'};
+    const pageMap = {'1':'workflow','2':'jobs','3':'geo-framework','4':'geo-audit','5':'schema','6':'monitor','7':'config','8':'keywords'};
     document.addEventListener('keydown', (e) => {
         if(e.altKey && !e.ctrlKey && !e.metaKey && pageMap[e.key]){
             e.preventDefault();
@@ -2174,8 +3005,9 @@ window.switchPage = switchPage;
     // 加载默认页数据
     Workflow.loadStats();
 
-    // 定时刷新DB状态(30s)
+    // 定时刷新DB状态(60s) - 性能优化：延长刷新间隔
     setInterval(async()=>{
+        // 只在页面可见时刷新，避免后台无意义请求
         if(document.visibilityState==='visible'){
             const r=await API.get('/api/status');
             const badge=document.getElementById('dbStatus');
@@ -2186,15 +3018,269 @@ window.switchPage = switchPage;
                     badge.className='status-pill offline';badge.innerHTML='<span class="status-dot"></span>未连接';
                 }
             }
-            // [L-01] 自动刷新当前可见页的统计数据
+            // [L-01] 自动刷新当前可见页的统计数据 (仅 workflow 页)
             const curPage = document.querySelector('.page:not(.hidden)')?.id;
             if(curPage === 'page-workflow') Workflow.loadStats();
         }
-    },30000);
+    },60000); // 改为60秒
 
     function applyTheme(){
         document.body.dataset.theme=State.theme;
         const b=document.querySelector('.nav-icon-btn:last-child:not([onclick])');
         if(b&&!b.onclick)b.innerHTML=State.theme==='dark'?'☀️':'🌙';
     }
+
+    // ============================================================
+    // 系统状态模块 (Status) - 刷新系统状态详情
+    // ============================================================
+    var Status = window.Status = {
+        /** 加载系统状态详情 */
+        async load() {
+            const table = document.getElementById('sysStatusTable');
+            if (!table) return;
+            
+            table.innerHTML = '<tr><th>组件</th><th>状态</th><th>详情</th></tr><tr><td colspan="3" style="text-align:center;padding:20px;">加载中...</td></tr>';
+            
+            try {
+                const r = await API.get('/api/status');
+                if (!r.ok) throw new Error(r.error);
+                
+                const d = r.data || {};
+                const components = [
+                    { name: 'GEO Pipeline', status: 'ok', detail: `版本 ${d.version || 'v2.0.0'}` },
+                    { name: 'Web UI', status: 'ok', detail: d.web_ui ? '已启用' : '未启用' },
+                    { name: '数据库', status: d.database?.connected ? 'ok' : 'error', detail: d.database?.type || '-' },
+                    { name: '运行时', status: 'ok', detail: d.runtime || '-' },
+                    { name: '最后更新', status: 'ok', detail: d.last_run ? new Date(d.last_run).toLocaleString('zh-CN') : '-' }
+                ];
+                
+                table.innerHTML = '<tr><th>组件</th><th>状态</th><th>详情</th></tr>' + 
+                    components.map(c => `<tr><td>${c.name}</td><td><span class="tag ${c.status==='ok'?'tag-green':c.status==='warn'?'tag-orange':'tag-red'}">${c.status==='ok'?'正常':c.status==='warn'?'警告':'错误'}</span></td><td>${c.detail}</td></tr>`).join('');
+            } catch (e) {
+                table.innerHTML = '<tr><th>组件</th><th>状态</th><th>详情</th></tr><tr><td colspan="3" style="text-align:center;color:#dc2626;">加载失败: '+esc(e.message)+'</td></tr>';
+            }
+        }
+    };
+
+    // ============================================================
+    // 实时日志窗口 (LogWindow) - 独立弹窗 + SSE 流式推送
+    // ============================================================
+    var LogWindow = window.LogWindow = {
+    _eventSource: null,
+    _logCount: 0,
+    _maxLines: 300,
+    _isOpen: false,
+    _connected: false,
+    _logs: [],
+
+    /** 切换显示/隐藏 */
+    toggle() {
+        if (this._isOpen) this.hide();
+        else this.show();
+    },
+
+    /** 显示日志窗口 */
+    show() {
+        if (this._isOpen) {
+            const modal = document.getElementById('logWindowModal');
+            if (modal) modal.style.display = 'flex';
+            return;
+        }
+        this._isOpen = true;
+        this._createModal();
+        this._connectSSE();
+        this._updateBtn(true);
+    },
+
+    /** 隐藏日志窗口 */
+    hide() {
+        const modal = document.getElementById('logWindowModal');
+        if (modal) modal.style.display = 'none';
+        this._isOpen = false;
+        this._updateBtn(false);
+    },
+
+    /** 关闭并销毁 */
+    close() {
+        this._disconnect();
+        const modal = document.getElementById('logWindowModal');
+        if (modal) modal.remove();
+        this._isOpen = false;
+        this._logs = [];
+        this._updateBtn(false);
+    },
+
+    /** 创建弹窗 */
+    _createModal() {
+        const html = `
+        <div id="logWindowModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center;" onclick="LogWindow._backdrop(event)">
+            <div style="background:#0d1117;border:1px solid #30363d;border-radius:12px;width:95%;max-width:900px;height:80vh;display:flex;flex-direction:column;box-shadow:0 25px 80px rgba(0,0,0,0.5);" onclick="event.stopPropagation()">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(180deg,#161b22,#0d1117);border-bottom:1px solid #30363d;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:20px;">💻</span>
+                        <span style="color:#c9d1d9;font-weight:600;font-size:15px;">实时调试日志</span>
+                        <span id="logStatus" style="font-size:11px;color:#8b949e;">◐ 连接中...</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span id="logCount" style="font-size:11px;color:#8b949e;background:#21262d;padding:2px 8px;border-radius:10px;">0 条</span>
+                        <button onclick="LogWindow.clear()" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;">清空</button>
+                        <button onclick="LogWindow.close()" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;">×</button>
+                    </div>
+                </div>
+                <div id="logContent" style="flex:1;overflow-y:auto;padding:12px 16px;background:#0d1117;font-family:'SF Mono',Consolas,monospace;font-size:12px;line-height:1.6;">
+                    <div style="color:#4ade80;text-align:center;padding:40px;">
+                        <div>╔═══════════════════════════════════════╗</div>
+                        <div>║   GEO Pipeline v2.0 - 实时日志终端   ║</div>
+                        <div>╚═══════════════════════════════════════╝</div>
+                        <div style="color:#58a6ff;margin-top:12px;">▶ 等待日志数据...</div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+    },
+
+    /** 连接 SSE */
+    _connectSSE() {
+        if (this._eventSource) this._eventSource.close();
+        try {
+            this._eventSource = new EventSource('/api/logs/stream');
+            this._eventSource.onopen = () => {
+                this._connected = true;
+                this._updateStatus('● 已连接', true);
+            };
+            this._eventSource.onmessage = (e) => {
+                try {
+                    const log = JSON.parse(e.data);
+                    this._addLog(log);
+                } catch {}
+            };
+            this._eventSource.onerror = () => {
+                this._connected = false;
+                this._updateStatus('✕ 连接断开', false);
+                setTimeout(() => { if (!this._connected) this._connectSSE(); }, 3000);
+            };
+        } catch (e) {
+            this._updateStatus('✕ 连接失败', false);
+        }
+    },
+
+    /** 断开 SSE */
+    _disconnect() {
+        if (this._eventSource) {
+            this._eventSource.close();
+            this._eventSource = null;
+        }
+        this._connected = false;
+    },
+
+    /** 添加日志 - 性能优化版：限制 DOM 节点数量 */
+    _addLog(log) {
+        this._logCount++;
+        this._logs.push(log);
+        if (this._logs.length > this._maxLines) {
+            this._logs.shift();
+        }
+        
+        const content = document.getElementById('logContent');
+        if (!content) return;
+        
+        // 移除欢迎信息
+        const welcome = content.querySelector('div[style*="text-align:center"]');
+        if (welcome) welcome.remove();
+
+        const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString('zh-CN',{hour12:false}) + '.' + String(new Date(log.timestamp).getMilliseconds()).padStart(3,'0') : '';
+        const lvl = log.level || 'INFO';
+        const lvlColors = {DEBUG:'#6e7681',INFO:'#58a6ff',WARN:'#d29922',ERROR:'#f85149'};
+        const src = log.source || 'System';
+        const msg = this._esc(log.message || '');
+        
+        const isSuccess = msg.includes('完成') || msg.includes('成功') || msg.includes('✅');
+        const isErr = lvl === 'ERROR';
+        const msgColor = isErr ? '#f85149' : isSuccess ? '#3fb950' : '#c9d1d9';
+
+        let dataHtml = '';
+        if (log.data && Object.keys(log.data).length > 0) {
+            const pairs = Object.entries(log.data).slice(0,4).map(([k,v]) => 
+                `<span style="color:#79c0ff">${this._esc(k)}:</span> <span style="color:#a5d6ff">${this._esc(String(v).substring(0,80))}</span>`
+            ).join(' &nbsp; ');
+            dataHtml = `<div style="margin-top:6px;padding:6px 8px;background:#161b22;border-radius:4px;font-size:11px;color:#8b949e;">${pairs}</div>`;
+        }
+
+        const line = `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #21262d;animation:fadeIn .2s">
+            <span style="color:#6e7681;flex-shrink:0">${time}</span>
+            <span style="color:${lvlColors[lvl]||'#6e7681'};flex-shrink:0;font-weight:600;width:45px">${lvl}</span>
+            <span style="color:#8b949e;flex-shrink:0;width:65px">${this._esc(src)}</span>
+            <span style="color:${msgColor};flex:1">${msg}</span>
+        </div>${dataHtml}`;
+        
+        content.insertAdjacentHTML('beforeend', line);
+        
+        // 性能优化：限制 DOM 节点数量，超过则批量移除旧节点
+        const maxVisibleLines = 200;
+        const children = content.children;
+        while (children.length > maxVisibleLines) {
+            children[0].remove();
+        }
+        
+        // 节流滚动：只在日志较少时自动滚动
+        if (this._logCount < 100) {
+            content.scrollTop = content.scrollHeight;
+        }
+        
+        const cnt = document.getElementById('logCount');
+        if (cnt) cnt.textContent = `${this._logCount} 条`;
+    },
+
+    /** 写入自定义日志 */
+    log(message, level = 'INFO', source = 'App') {
+        this._addLog({timestamp: new Date().toISOString(), level, source, message});
+    },
+
+    /** 清空日志 */
+    clear() {
+        this._logCount = 0;
+        this._logs = [];
+        const content = document.getElementById('logContent');
+        if (content) {
+            content.innerHTML = `<div style="color:#4ade80;text-align:center;padding:40px;">
+                <div>╔═══════════════════════════════════════╗</div>
+                <div>║   GEO Pipeline v2.0 - 实时日志终端   ║</div>
+                <div>╚═══════════════════════════════════════╝</div>
+                <div style="color:#58a6ff;margin-top:12px;">▶ 日志已清空</div>
+            </div>`;
+        }
+        const cnt = document.getElementById('logCount');
+        if (cnt) cnt.textContent = '0 条';
+    },
+
+    /** 更新状态文本 */
+    _updateStatus(text, ok) {
+        const el = document.getElementById('logStatus');
+        if (el) { el.textContent = text; el.style.color = ok ? '#3fb950' : '#f85149'; }
+    },
+
+    /** 更新按钮状态 */
+    _updateBtn(active) {
+        const btn = document.getElementById('logWindowBtn');
+        if (btn) btn.style.background = active ? '#2563eb' : '';
+        if (btn) btn.style.color = active ? 'white' : '';
+    },
+
+    /** 点击背景关闭 */
+    _backdrop(e) {
+        if (e.target === e.currentTarget) this.hide();
+    },
+
+    /** HTML转义 */
+    _esc(s) { if(!s)return''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+    };
+
+    // 页面加载完成后不自动打开日志窗口 (性能优化)
+    // document.addEventListener('DOMContentLoaded', () => { LogWindow.show(); });
+
+    // 暴露全局函数 (供 HTML onclick 调用)
+    window.switchPage = switchPage;
+    window.refreshData = refreshData;
+    window.toggleTheme = toggleTheme;
 })();

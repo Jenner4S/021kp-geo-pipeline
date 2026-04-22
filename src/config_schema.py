@@ -30,6 +30,7 @@ class ConfigType(str, Enum):
     TEXTAREA = "textarea"        # 多行文本
     JSON_EDITOR = "json"         # JSON 编辑器
     PATH = "path"               # 路径选择器
+    ACTION = "action"            # 操作按钮
 
 
 class ConfigGroup(str, Enum):
@@ -418,6 +419,13 @@ CONFIG_SCHEMA: List[ConfigFieldDef] = [
         description="Hours before attempting recovery after circuit break",
         placeholder="24", order=4,
         validation={"min": 1, "max": 168},
+    ),
+    # ==================== Data Management ====================
+    ConfigFieldDef(
+        key="advanced.clear_business_data", label="清理业务数据", type_=ConfigType.ACTION,
+        default="", group=ConfigGroup.ADVANCED,
+        description="清理所有岗位数据、uploads/、audit_logs/、dist/目录（保留配置），用于重复测试",
+        order=99,
     ),
 ]
 

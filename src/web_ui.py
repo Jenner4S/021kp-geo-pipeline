@@ -103,9 +103,14 @@ class WebUIHandler:
         if getattr(sys, 'frozen', False):
             # running as compiled executable
             self._static_dir = Path(sys._MEIPASS) / 'static'
+            self._data_dir = Path(sys._MEIPASS) / 'data'
         else:
             # running from source
             self._static_dir = Path(__file__).parent.parent / 'static'
+            self._data_dir = Path(__file__).parent.parent / 'data'
+        
+        # 确保 data 目录存在
+        self._data_dir.mkdir(parents=True, exist_ok=True)
         
         # 统一配置管理器 (替代散落的 os.getenv 调用)
         try:
@@ -141,6 +146,127 @@ class WebUIHandler:
         # CSRF Token (简单实现: 基于会话的token校验)
         self._csrf_tokens: Dict[str, str] = {}  # session_id -> token
         self._csrf_token_lock = threading.Lock()
+        
+        # 实时日志缓冲区 (用于 SSE 流式推送)
+        self._log_buffer: List[Dict] = []
+        self._log_buffer_lock = threading.Lock()
+        self._log_buffer_max_size = 500  # 保留最近500条日志
+        
+        # SSE 订阅者列表
+        self._sse_subscribers: List = []
+        self._sse_lock = threading.Lock()
+    
+    # ================================================================
+    #   实时日志 API (SSE - Server-Sent Events)
+    # ================================================================
+    
+    def _add_log(self, message: str, level: str = "INFO", source: str = "System", data: Dict = None):
+        """
+        添加日志到缓冲区并通知所有 SSE 订阅者
+        
+        Args:
+            message: 日志消息
+            level: 日志级别 DEBUG/INFO/WARN/ERROR
+            source: 日志来源 System/Network/Platform 等
+            data: 附加数据字典
+        """
+        log_entry = {
+            'timestamp': datetime.now(timezone(timedelta(hours=8))).isoformat(),
+            'level': level,
+            'source': source,
+            'message': message,
+            'data': data
+        }
+        
+        with self._log_buffer_lock:
+            self._log_buffer.append(log_entry)
+            # 限制缓冲区大小
+            if len(self._log_buffer) > self._log_buffer_max_size:
+                self._log_buffer = self._log_buffer[-self._log_buffer_max_size:]
+        
+        # 通知 SSE 订阅者
+        self._broadcast_log(log_entry)
+        
+        # 同时输出到标准日志
+        logger.info(f"[{source}] {message}")
+    
+    def _broadcast_log(self, log_entry: Dict):
+        """向所有 SSE 订阅者广播日志"""
+        with self._sse_lock:
+            dead_subscribers = []
+            for queue in self._sse_subscribers:
+                try:
+                    queue.put_nowait(log_entry)
+                except:
+                    dead_subscribers.append(queue)
+            # 清理断开的订阅者
+            for q in dead_subscribers:
+                self._sse_subscribers.remove(q)
+    
+    def _api_log_stream(self, request):
+        """
+        GET /api/logs/stream
+        
+        SSE 端点：实时推送日志流。客户端通过 EventSource 连接此端点，
+        即可接收实时的日志推送，类似于 tail -f 命令。
+        
+        返回:
+            text/event-stream 格式的响应，持续推送日志直到客户端断开
+        """
+        import queue
+        import uuid
+        
+        # 创建专属于此连接的日志队列
+        log_queue = queue.Queue(maxsize=100)
+        
+        with self._sse_lock:
+            self._sse_subscribers.append(log_queue)
+        
+        # 生成连接ID用于标识
+        conn_id = str(uuid.uuid4())[:8]
+        
+        # 初始连接日志
+        self._add_log(f"客户端 {conn_id} 已连接日志流", "INFO", "SSE")
+        
+        def generate_sse():
+            """生成 SSE 数据流"""
+            import json
+            
+            # 首先发送最近的历史日志（最多50条）
+            with self._log_buffer_lock:
+                recent_logs = self._log_buffer[-50:]
+            
+            for log in recent_logs:
+                yield f"data: {json.dumps(log, ensure_ascii=False)}\n\n"
+            
+            # 然后持续等待新日志
+            while True:
+                try:
+                    # 阻塞等待新日志，超时则发送心跳
+                    log_entry = log_queue.get(timeout=30)
+                    yield f"data: {json.dumps(log_entry, ensure_ascii=False)}\n\n"
+                except queue.Empty:
+                    # 发送心跳保持连接
+                    yield f": heartbeat\n\n"
+                except GeneratorExit:
+                    # 客户端断开
+                    break
+        
+        # 构建 SSE 响应
+        response_body = generate_sse()
+        
+        return {
+            'status': 200,
+            'headers': {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Connection': 'keep-alive',
+                'X-Accel-Buffering': 'no',  # 禁用 Nginx 缓冲
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': response_body,
+            'is_stream': True  # 标记为流式响应
+        }
     
     # ================================================================
     #   路由注册表
@@ -163,6 +289,7 @@ class WebUIHandler:
             'GET /api/stats':             self._api_statistics,
             'GET /api/config':            self._api_get_config,
             'PUT /api/config':            self._api_update_config,
+            'POST /api/data/cleanup':     self._api_data_cleanup,
             'GET /api/history':           self._api_history,
             'GET /api/schema-preview':    self._api_schema_preview,
             'GET /api/geo/audit':         self._api_geo_audit,
@@ -178,6 +305,9 @@ class WebUIHandler:
             'POST /api/monitor/check':      self._api_manual_check,
             'GET  /api/monitor/reports':    self._api_monitor_reports,
 
+            # --- 实时日志流 (SSE) ---
+            'GET  /api/logs/stream':        self._api_log_stream,
+
             # --- GEO 审计增强 (A1/A3 - 历史持久化 + 导出) ---
             'GET  /api/geo/audit/history':  self._api_audit_history,
             'POST /api/geo/audit/save':     self._api_save_audit,
@@ -186,6 +316,12 @@ class WebUIHandler:
             # --- 配置增强 (C2 - 导出/导入) ---
             'GET  /api/config/export':      self._api_config_export,
             'POST /api/config/import':      self._api_config_import,
+
+            # --- 关键词动态配置 (业务数据 - 从岗位数据自动提取) ---
+            'GET  /api/keywords':            self._api_keywords_get,
+            'POST /api/keywords/save':       self._api_keywords_save,
+            'POST /api/keywords/refresh':    self._api_keywords_refresh,
+            'POST /api/keywords/upload':     self._api_keywords_upload,
             
             # --- 静态资源服务 ---
             'GET /static/*':              self._serve_static_file,
@@ -762,6 +898,7 @@ class WebUIHandler:
             try:
                 jobs = self._db.fetch_jobs(limit=1000)
                 if jobs:
+                    # 数据库数据已包含 data_source='sqlite'
                     return [j.to_dict() for j in jobs]
             except Exception as e:
                 logger.warning(f"DB后端加载失败，降级到CSV: {e}")
@@ -779,16 +916,27 @@ class WebUIHandler:
             csv_files = sorted(upload_dir.glob('*.csv'), reverse=True) if upload_dir.exists() else []
 
             # 兜底: data/ (打包时自带的示例数据)
+            source_file = None
             if not csv_files:
                 sample_csv = base_dir / 'data' / 'sample_jobs.csv'
                 if sample_csv.exists():
                     csv_files = [sample_csv]
+                    source_file = 'data/sample_jobs.csv'
+            else:
+                source_file = f'uploads/{csv_files[0].name}'
 
             if not csv_files:
                 return []
 
             from intent_router import load_jobs_from_csv
-            return load_jobs_from_csv(str(csv_files[0]))
+            jobs = load_jobs_from_csv(str(csv_files[0]))
+            
+            # 为 CSV 数据标记来源信息
+            for job in jobs:
+                job['data_source'] = 'csv'
+                job['source_file'] = source_file or csv_files[0].name
+            
+            return jobs
         except Exception:
             return []
 
@@ -798,6 +946,8 @@ class WebUIHandler:
         数据源优先级:
           1. SQLite/MySQL 数据库 (get_job_by_id, 精确匹配)
           2. 内存降级 (_load_jobs_data → CSV/DB全量加载, id/title模糊匹配)
+        
+        返回数据包含 data_source 字段标识来源 (sqlite/csv)
         """
         path_parts = request.get('path', '').split('/')
         job_id = path_parts[-1] if len(path_parts) > 2 else None
@@ -811,7 +961,11 @@ class WebUIHandler:
             try:
                 job = self._db.get_job_by_id(job_id)
                 if job:
-                    return self._json_response(job.to_dict())
+                    job_dict = job.to_dict()
+                    # 确保 data_source 字段存在
+                    job_dict['data_source'] = 'sqlite'
+                    job_dict['source_file'] = self._db.db_path.name if hasattr(self._db, 'db_path') else 'geo_pipeline.db'
+                    return self._json_response(job_dict)
                 db_result = 'not_found'
             except Exception as e:
                 logger.warning(f"[JOB-DETAIL] DB查询异常(job_id={job_id}): {e}")
@@ -824,6 +978,7 @@ class WebUIHandler:
             for j in jobs_data:
                 if str(j.get('id')) == job_id or j.get('title') == job_id:
                     logger.info(f"[JOB-DETAIL] job_id={job_id} 从降级数据源命中 (source=memory/csv)")
+                    # data_source 已在 _load_jobs_data 中设置
                     return self._json_response(j)
             
             # [DIAG] 记录详细诊断信息帮助排查数据不一致
@@ -934,6 +1089,129 @@ class WebUIHandler:
             'success_rate': round(success_count / total * 100, 1),
             'avg_duration': round(sum(durations) / len(durations), 2) if durations else 0
         }
+
+    # ================================================================
+    #   API: 数据管理
+    # ================================================================
+
+    def _api_data_cleanup(self, request):
+        """
+        POST /api/data/cleanup
+        
+        清理所有业务数据，用于重复测试。
+        
+        清理内容:
+            - jobs 表所有记录（软删除 + 截断）
+            - uploads/ 目录文件
+            - audit_logs/ 目录
+            - dist/ 目录文件
+        
+        保留:
+            - 配置文件 (config_store)
+            - 数据库文件本身
+            - static/ 静态资源
+        """
+        import shutil
+        import glob
+        
+        result = {
+            'success': True,
+            'deleted_jobs': 0,
+            'deleted_files': 0,
+            'errors': []
+        }
+        
+        try:
+            # 1. 清理数据库 jobs 表
+            if self._db:
+                try:
+                    c = self._db.conn.cursor()
+                    # 获取当前记录数
+                    c.execute("SELECT COUNT(*) FROM jobs WHERE status='active'")
+                    count_before = c.fetchone()[0]
+                    
+                    # 软删除所有活跃记录
+                    c.execute("UPDATE jobs SET status='deleted' WHERE status='active'")
+                    self._db.conn.commit()
+                    
+                    # 可选：彻底清空表（截断）
+                    # c.execute("DELETE FROM jobs")
+                    # self._db.conn.commit()
+                    
+                    result['deleted_jobs'] = count_before
+                    logger.info(f"[DATA-CLEANUP] 清理了 {count_before} 条岗位记录")
+                except Exception as e:
+                    logger.warning(f"[DATA-CLEANUP] 数据库清理失败: {e}")
+                    result['errors'].append(f"数据库: {e}")
+        except Exception as e:
+            logger.error(f"[DATA-CLEANUP] 错误: {e}")
+            result['errors'].append(str(e))
+        
+        # 2. 清理 uploads/ 目录
+        try:
+            upload_dir = Path('./uploads')
+            if upload_dir.exists():
+                upload_files = list(upload_dir.glob('*'))
+                for f in upload_files:
+                    if f.is_file():
+                        f.unlink()
+                        result['deleted_files'] += 1
+                    elif f.is_dir():
+                        shutil.rmtree(f)
+                        result['deleted_files'] += 1
+                logger.info(f"[DATA-CLEANUP] 清理 uploads/ {len(upload_files)} 项")
+        except Exception as e:
+            logger.warning(f"[DATA-CLEANUP] uploads 清理失败: {e}")
+            result['errors'].append(f"uploads: {e}")
+        
+        # 3. 清理 audit_logs/ 目录
+        try:
+            audit_dir = Path('./audit_logs')
+            if audit_dir.exists():
+                for subdir in audit_dir.glob('*'):
+                    if subdir.is_dir():
+                        shutil.rmtree(subdir)
+                        result['deleted_files'] += 1
+                    elif subdir.is_file():
+                        subdir.unlink()
+                        result['deleted_files'] += 1
+                logger.info(f"[DATA-CLEANUP] 清理 audit_logs/")
+        except Exception as e:
+            logger.warning(f"[DATA-CLEANUP] audit_logs 清理失败: {e}")
+            result['errors'].append(f"audit_logs: {e}")
+        
+        # 4. 清理 dist/ 目录
+        try:
+            dist_dir = Path('./dist')
+            if dist_dir.exists():
+                dist_files = list(dist_dir.glob('*'))
+                for f in dist_files:
+                    if f.is_file():
+                        f.unlink()
+                        result['deleted_files'] += 1
+                    elif f.is_dir():
+                        shutil.rmtree(f)
+                        result['deleted_files'] += 1
+                logger.info(f"[DATA-CLEANUP] 清理 dist/ {len(dist_files)} 项")
+        except Exception as e:
+            logger.warning(f"[DATA-CLEANUP] dist 清理失败: {e}")
+            result['errors'].append(f"dist: {e}")
+        
+        # 5. 清理 execution_history 表
+        try:
+            if self._db:
+                c = self._db.conn.cursor()
+                c.execute("DELETE FROM execution_history")
+                self._db.conn.commit()
+                logger.info("[DATA-CLEANUP] 清空 execution_history")
+        except Exception as e:
+            logger.warning(f"[DATA-CLEANUP] execution_history 清理失败: {e}")
+        
+        # 判断是否全部成功
+        if result['errors']:
+            result['success'] = False
+        
+        return self._json_response(result)
 
     # ================================================================
     #   API: 配置管理
@@ -1662,7 +1940,7 @@ class WebUIHandler:
         若不传 platform 参数则批量检查所有启用平台。
         
         Returns:
-            metrics: CitationMetrics 列表
+            metrics: CitationMetrics 列表（按平台聚合）
             checked_at: 检查时间
             overall_status: NORMAL / DEGRADED / FROZEN
             avg_citation_rate: 平均引用率
@@ -1689,8 +1967,44 @@ class WebUIHandler:
             # 批量检测（所有启用平台）
             metrics = monitor.probe.batch_check()
         
-        rates = [m.citation_rate for m in metrics if m.citation_rate is not None]
-        avg_rate = sum(rates) / len(rates) if rates else 0.0
+        # 按平台聚合指标数据
+        platform_aggregated: dict[str, dict] = {}
+        for m in metrics:
+            p = m.platform
+            if p not in platform_aggregated:
+                platform_aggregated[p] = {
+                    'brand_mention_count': 0,
+                    'total_queries': 0,
+                    'rates': [],
+                    'last_check_time': m.last_check_time,
+                    'trend': m.trend,
+                }
+            platform_aggregated[p]['brand_mention_count'] += m.brand_mention_count
+            platform_aggregated[p]['total_queries'] += m.total_queries
+            if m.citation_rate is not None:
+                platform_aggregated[p]['rates'].append(m.citation_rate)
+            if m.last_check_time:
+                platform_aggregated[p]['last_check_time'] = m.last_check_time
+            # 趋势取最新值
+        
+        # 计算聚合后的引用率（按 brand_mention_count 加权）
+        total_mentions = 0
+        for p, data in platform_aggregated.items():
+            total_mentions += data['brand_mention_count']
+        
+        weighted_sum = 0.0
+        for p, data in platform_aggregated.items():
+            if data['rates']:
+                # 简单平均（每个查询关键词权重相同）
+                data['citation_rate'] = sum(data['rates']) / len(data['rates'])
+            else:
+                data['citation_rate'] = 0.0
+            # 按提及次数加权贡献
+            if total_mentions > 0:
+                weighted_sum += data['citation_rate'] * data['brand_mention_count']
+        
+        # 平均引用率：加权平均
+        avg_rate = weighted_sum / total_mentions if total_mentions > 0 else 0.0
         
         # 判定整体状态
         if avg_rate < 0.3:
@@ -1703,19 +2017,20 @@ class WebUIHandler:
         return self._json_response({
             'metrics': [
                 {
-                    'platform': m.platform,
-                    'brand_mention_count': m.brand_mention_count,
-                    'total_queries': m.total_queries,
-                    'citation_rate': round(m.citation_rate, 4),
-                    'trend': m.trend,
-                    'last_check_time': m.last_check_time
+                    'platform': p,
+                    'brand_mention_count': data['brand_mention_count'],
+                    'total_queries': data['total_queries'],
+                    'citation_rate': round(data['citation_rate'], 2),
+                    'trend': data['trend'],
+                    'last_check_time': data['last_check_time']
                 }
-                for m in metrics
+                for p, data in platform_aggregated.items()
             ],
             'checked_at': datetime.now(timezone(timedelta(hours=8))).isoformat(),
             'overall_status': status,
-            'avg_citation_rate': round(avg_rate, 4),
-            'platform_count': len(metrics)
+            'avg_citation_rate': round(avg_rate, 2),
+            'platform_count': len(platform_aggregated),
+            'total_brand_mentions': total_mentions
         })
 
     def _api_monitor_alerts(self, request):
@@ -1854,8 +2169,11 @@ class WebUIHandler:
             }, status_code=503)
         
         try:
+            logger.info("[Monitor] 开始初始化 DistributionMonitor...")
             monitor = DistributionMonitor()
+            logger.info("[Monitor] DistributionMonitor 初始化成功，开始 run_single_check")
             report = monitor.run_single_check()
+            logger.info(f"[Monitor] run_single_check 完成，metrics 数量: {len(report.metrics)}")
             
             return self._json_response({
                 'report_id': report.report_id,
@@ -1867,21 +2185,33 @@ class WebUIHandler:
                     {
                         'platform': m.platform,
                         'citation_rate': round(m.citation_rate, 4),
-                        'trend': m.trend
+                        'brand_mention_count': m.brand_mention_count,
+                        'total_queries': m.total_queries,
+                        'trend': m.trend,
+                        'last_check_time': m.last_check_time,
+                        # 引用详情
+                        'search_queries_used': getattr(m, 'search_queries_used', []),
+                        'cited_keywords': getattr(m, 'cited_keywords', [])[:10],
+                        'cited_sources': getattr(m, 'cited_sources', [])[:10],
+                        'citation_contexts': getattr(m, 'citation_contexts', [])
                     } for m in report.metrics
                 ],
                 'alerts_triggered': len(report.alerts_triggered),
                 'alerts_detail': report.alerts_triggered,
                 'recommendations': report.recommendations,
                 'rollback_executed': report.overall_status.value == 'FROZEN',
-                'ai_preview_simulation': report.ai_preview_simulation[:500] + '...' if len(report.ai_preview_simulation) > 500 else report.ai_preview_simulation
+                'ai_preview_simulation': report.ai_preview_simulation[:500] + '...' if len(report.ai_preview_simulation) > 500 else report.ai_preview_simulation,
+                'debug_logs': report.debug_logs  # 包含详细调试日志
             })
         except Exception as e:
-            logger.error(f"[Monitor] 手动检查异常: {e}")
+            import traceback
+            error_detail = traceback.format_exc()
+            logger.error(f"[Monitor] 手动检查异常: {e}\n{error_detail}")
             return self._json_response({
                 'error': str(e),
                 'status': 'error',
-                'report_id': None
+                'report_id': None,
+                'detail': error_detail
             }, status_code=500)
 
     def _api_monitor_reports(self, request):
@@ -2238,4 +2568,185 @@ class WebUIHandler:
             return self._error_response('请求体必须是有效 JSON', 400)
         except Exception as e:
             logger.error(f"[API] POST /api/config/import 异常: {e}", exc_info=True)
+            return self._error_response(str(e), 500)
+
+    # ================================================================
+    #   关键词动态配置 API
+    # ================================================================
+
+    def _get_monitor(self):
+        """获取或创建分发监控器实例（带关键词配置）"""
+        if not hasattr(self, '_monitor') or self._monitor is None:
+            from dist_monitor import AICitationProbe
+            keywords_path = self._data_dir / 'keywords.json'
+            self._monitor = AICitationProbe(keywords_config_path=str(keywords_path))
+        return self._monitor
+
+    def _api_keywords_get(self, request):
+        """
+        GET /api/keywords
+
+        获取当前关键词配置（从岗位数据自动提取）
+        """
+        try:
+            monitor = self._get_monitor()
+            keywords = monitor.get_keywords()
+            return self._json_response({
+                'success': True,
+                'data': keywords,
+                'message': f'从岗位数据提取 {keywords["total_count"]} 个关键词'
+            })
+        except Exception as e:
+            logger.error(f"[API] GET /api/keywords 异常: {e}", exc_info=True)
+            return self._error_response(str(e), 500)
+
+    def _api_keywords_refresh(self, request):
+        """
+        POST /api/keywords/refresh
+
+        重新从岗位数据提取关键词
+        """
+        try:
+            monitor = self._get_monitor()
+            result = monitor.refresh_keywords()
+            return self._json_response({
+                'success': True,
+                'data': result,
+                'message': result['message']
+            })
+        except Exception as e:
+            logger.error(f"[API] POST /api/keywords/refresh 异常: {e}", exc_info=True)
+            return self._error_response(str(e), 500)
+
+    def _api_keywords_save(self, request):
+        """
+        POST /api/keywords/save
+        
+        保存关键词配置
+        
+        Body (JSON): {
+            "search_queries": ["词1", "词2", ...],
+            "brand_keywords": ["品牌1", "品牌2", ...],
+            "save_to_db": false  // 是否保存到数据库
+        }
+        """
+        try:
+            params = json.loads(request.get('body', b'{}'))
+            search_queries = params.get('search_queries', [])
+            brand_keywords = params.get('brand_keywords', [])
+            save_to_db = params.get('save_to_db', False)
+
+            if not isinstance(search_queries, list):
+                return self._error_response('search_queries 必须是数组', 400)
+            if not isinstance(brand_keywords, list):
+                return self._error_response('brand_keywords 必须是数组', 400)
+
+            monitor = self._get_monitor()
+            result = monitor.save_keywords(
+                search_queries=search_queries,
+                brand_keywords=brand_keywords,
+                save_to_db=save_to_db
+            )
+
+            if result['success']:
+                logger.info(f"[API] 关键词配置已保存: {result['message']}")
+
+            return self._json_response(result)
+
+        except json.JSONDecodeError:
+            return self._error_response('请求体必须是有效 JSON', 400)
+        except Exception as e:
+            logger.error(f"[API] POST /api/keywords/save 异常: {e}", exc_info=True)
+            return self._error_response(str(e), 500)
+
+    def _api_keywords_upload(self, request):
+        """
+        POST /api/keywords/upload
+        
+        通过上传文件批量导入关键词
+        
+        请求格式 (JSON):
+        {
+            "search_queries": ["词1", "词2", ...],
+            "brand_keywords": ["品牌1", "品牌2", ...]
+        }
+        
+        或 multipart/form-data:
+        - file: CSV/TXT 文件
+        - keyword_type: "search_query" | "brand_keyword" (TXT模式)
+        """
+        try:
+            content_type = request.get('headers', {}).get('Content-Type', '')
+            search_queries = []
+            brand_keywords = []
+
+            if 'application/json' in content_type:
+                # JSON 格式：前端已解析文件内容，直接发送关键词列表
+                params = json.loads(request.get('body', b'{}'))
+                search_queries = params.get('search_queries', [])
+                brand_keywords = params.get('brand_keywords', [])
+            elif 'multipart/form-data' in content_type:
+                # 解析 multipart/form-data（简化实现）
+                body = request.get('body', b'')
+                try:
+                    body_text = body.decode('utf-8')
+                except:
+                    body_text = body.decode('gbk', errors='ignore')
+
+                lines = body_text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+
+                # 简单判断格式
+                has_header = 'keyword' in lines[0].lower() if lines else False
+                is_csv = ',' in lines[0] if lines else False
+
+                # 尝试从 multipart body 中提取 keyword_type 参数
+                keyword_type = 'search_query'
+                for line in lines[:5]:
+                    if 'keyword_type' in line.lower():
+                        if 'brand_keyword' in line.lower():
+                            keyword_type = 'brand_keyword'
+                        break
+
+                for line in lines:
+                    line = line.strip()
+                    if not line or (has_header and line == lines[0]):
+                        continue
+
+                    if is_csv:
+                        parts = line.split(',', 1)
+                        kw = parts[0].strip()
+                        kw_type = parts[1].strip().lower() if len(parts) > 1 else 'search_query'
+                        if kw_type == 'brand_keyword':
+                            brand_keywords.append(kw)
+                        else:
+                            search_queries.append(kw)
+                    else:
+                        if keyword_type == 'brand_keyword':
+                            brand_keywords.append(line)
+                        else:
+                            search_queries.append(line)
+            else:
+                return self._error_response('Content-Type 必须是 application/json 或 multipart/form-data', 400)
+
+            if not search_queries and not brand_keywords:
+                return self._error_response('未找到有效关键词', 400)
+
+            monitor = self._get_monitor()
+            result = monitor.save_keywords(
+                search_queries=search_queries if search_queries else None,
+                brand_keywords=brand_keywords if brand_keywords else None,
+                save_to_db=False
+            )
+
+            return self._json_response({
+                **result,
+                'imported': {
+                    'search_queries': len(search_queries),
+                    'brand_keywords': len(brand_keywords)
+                }
+            })
+        except json.JSONDecodeError:
+            return self._error_response('请求体必须是有效 JSON', 400)
+        except Exception as e:
+            logger.error(f"[API] POST /api/keywords/upload 异常: {e}", exc_info=True)
             return self._error_response(str(e), 500)

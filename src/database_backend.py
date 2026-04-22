@@ -63,6 +63,7 @@ class JobRecord:
     is_urgent: bool = False
     created_at: str = ""
     updated_at: str = ""
+    data_source: str = "sqlite"  # 数据来源: sqlite/csv
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class JobRecord:
             "benefits": self.benefits, "description": self.description,
             "address": self.address, "update_time": self.update_time,
             "source_url": self.source_url, "is_urgent": self.is_urgent,
+            "data_source": self.data_source,
         }
 
 
@@ -166,6 +168,15 @@ class SQLiteBackend(DatabaseBackendABC):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._connected = False
+    
+    def _safe_float(self, val, default=0.0) -> float:
+        """安全转换为浮点数，空值或无效值返回默认值"""
+        if val is None or val == '':
+            return default
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
     
     @property
     def conn(self):
@@ -286,7 +297,7 @@ class SQLiteBackend(DatabaseBackendABC):
             """, (
                 jid, job_data.get('title',''), job_data.get('company',''),
                 job_data.get('location','Songjiang'),
-                float(job_data.get('min_salary',0)), float(job_data.get('max_salary',0)),
+                self._safe_float(job_data.get('min_salary')), self._safe_float(job_data.get('max_salary')),
                 job_data.get('category','general'),
                 json.dumps(job_data.get('tags',[]), ensure_ascii=False),
                 job_data.get('requirements',''), job_data.get('benefits',''),
@@ -334,7 +345,7 @@ class SQLiteBackend(DatabaseBackendABC):
                     params_list.append((
                         jid, job.get('title',''), job.get('company',''),
                         job.get('location','Songjiang'),
-                        float(job.get('min_salary',0)), float(job.get('max_salary',0)),
+                        self._safe_float(job.get('min_salary')), self._safe_float(job.get('max_salary')),
                         job.get('category','general'),
                         json.dumps(job.get('tags',[]), ensure_ascii=False),
                         job.get('requirements',''), job.get('benefits',''),
@@ -483,6 +494,7 @@ class SQLiteBackend(DatabaseBackendABC):
             is_urgent=bool(_safe('is_urgent', 0)),
             created_at=str(_safe('created_at', '')),
             updated_at=str(_safe('updated_at', '')),
+            data_source='sqlite',  # 数据库来源
         )
 
 

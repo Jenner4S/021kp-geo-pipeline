@@ -38,6 +38,9 @@
         <button class="nav-icon-btn" data-page="config" title="系统设置">
             ⚙️<span class="nav-label">设置</span>
         </button>
+        <button class="nav-icon-btn" data-page="keywords" title="关键词配置">
+            🔑<span class="nav-label">关键词</span>
+        </button>
 
         <div class="nav-spacer"></div>
         <div class="nav-bottom">
@@ -52,6 +55,7 @@
             <span class="status-pill online" id="dbStatus"><span class="status-dot"></span> 系统就绪</span>
         </div>
         <div class="topbar-actions">
+            <button class="btn-outline" onclick="LogWindow.toggle()" id="logWindowBtn">💻 日志</button>
             <button class="btn-outline" onclick="refreshData()">🔄 刷新</button>
         </div>
     </header>
@@ -394,54 +398,157 @@
                 </div>
             </div>
 
-            <!-- AI 引用率监控面板 (新增) -->
-            <div class="card" id="citationPanelCard" style="border-left:4px solid #1a73e8;">
+            <!-- 业务指标卡片 -->
+            <div class="card mb-16">
+                <div class="card-head"><h3>📋 业务指标</h3></div>
+                <div class="card-body">
+                    <!-- 骨架屏占位 -->
+                    <div id="monitorCardsSkeleton" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;">
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text lg"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text lg"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text lg"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text lg"></div><div class="skeleton skeleton-text sm"></div></div>
+                    </div>
+                    <!-- 真实数据容器 -->
+                    <div id="monitorCards" class="hidden" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;"></div>
+                </div>
+            </div>
+
+            <!-- AI 引用率监控 (单独一行) -->
+            <div class="card mb-16" id="citationPanelCard" style="border-left:4px solid #1a73e8;">
                 <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
                     <h3>🛰️ AI 引用率监控</h3>
                     <span class="tag tag-green" id="citationOverallStatus">正常</span>
                 </div>
                 <div class="card-body">
-                    <div class="phase-grid" id="citationMetricsGrid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));gap:12px;">
-                        <div style="grid-column:1/-1;color:var(--text-muted);font-size:13px;text-align:center;padding:30px 0;">
-                            点击「执行引用率检测」获取各平台实时数据
+                    <div style="background:linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#075985;">
+                        <span style="color:#059669;">● ≥1% 健康</span> &nbsp;
+                        <span style="color:#d97706;">● 0.5%~1% 关注</span> &nbsp;
+                        <span style="color:#dc2626;">● &lt;0.5% 告警</span>
+                    </div>
+                    <!-- 骨架屏占位 -->
+                    <div id="citationMetricsGridSkeleton" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;">
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text lg" style="height:28px;width:50%;"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text lg" style="height:28px;width:50%;"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text lg" style="height:28px;width:50%;"></div><div class="skeleton skeleton-text sm"></div></div>
+                        <div class="skeleton-metric"><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text lg" style="height:28px;width:50%;"></div><div class="skeleton skeleton-text sm"></div></div>
+                    </div>
+                    <!-- 真实数据容器 -->
+                    <div id="citationMetricsGrid" class="hidden" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
+                    <div id="citationTrendSummary" class="hidden" style="display:none;margin-top:10px;padding:10px;background:var(--gray-50);border-radius:6px;font-size:12px;"></div>
+                </div>
+            </div>
+
+            <!-- 监控报告 + 告警中心 左右两列 -->
+            <div class="cols-2 mb-16">
+                <div class="card">
+                    <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h3>📁 监控报告历史</h3>
+                        <span style="font-size:12px;color:var(--text-muted);" id="reportsTotalHint"></span>
+                    </div>
+                    <!-- 骨架屏占位 -->
+                    <div class="card-body" id="reportsPanelBodySkeleton" style="max-height:200px;overflow-y:auto;">
+                        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:80px;height:12px;"></div>
+                            <div class="skeleton" style="width:60px;height:18px;border-radius:4px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:80px;height:12px;"></div>
+                            <div class="skeleton" style="width:60px;height:18px;border-radius:4px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:80px;height:12px;"></div>
+                            <div class="skeleton" style="width:60px;height:18px;border-radius:4px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
                         </div>
                     </div>
-                    <!-- 趋势摘要 -->
-                    <div id="citationTrendSummary" style="display:none;margin-top:14px;padding:12px;background:var(--gray-50);border-radius:8px;font-size:13px;"></div>
+                    <!-- 真实数据容器 -->
+                    <div class="card-body hidden" id="reportsPanelBody" style="max-height:200px;overflow-y:auto;"></div>
+                </div>
+                <div class="card" id="alertsPanelCard" style="border-left:4px solid #d97706;">
+                    <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h3>⚠️ 告警中心</h3>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="tag tag-red" id="alertCriticalCount">0 Critical</span>
+                            <span class="tag tag-orange" id="alertWarningCount">0 Warning</span>
+                        </div>
+                    </div>
+                    <!-- 骨架屏占位 -->
+                    <div class="card-body" id="alertsPanelBodySkeleton" style="max-height:200px;overflow-y:auto;">
+                        <div style="padding:10px;border-radius:8px;border-left:3px solid var(--gray-300);background:var(--gray-50);">
+                            <div class="skeleton skeleton-text" style="width:60%;"></div>
+                            <div class="skeleton skeleton-text sm" style="margin-top:6px;"></div>
+                        </div>
+                        <div style="padding:10px;border-radius:8px;border-left:3px solid var(--gray-300);background:var(--gray-50);margin-top:8px;">
+                            <div class="skeleton skeleton-text" style="width:50%;"></div>
+                            <div class="skeleton skeleton-text sm" style="margin-top:6px;"></div>
+                        </div>
+                    </div>
+                    <!-- 真实数据容器 -->
+                    <div class="card-body hidden" id="alertsPanelBody" style="max-height:200px;overflow-y:auto;"></div>
                 </div>
             </div>
 
-            <!-- 回滚状态指示器 (新增) -->
-            <div class="card mt-16" id="rollbackPanelCard">
-                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
-                    <h3>🔒 回滚状态 / 安全机制</h3>
-                    <button class="btn-outline btn-sm" onclick="Monitor.loadRollback()" title="刷新回滚状态">刷新</button>
-                </div>
-                <div class="card-body" id="rollbackPanelBody" style="min-height:60px;">
-                    <div style="color:var(--text-muted);font-size:13px;">加载中...</div>
-                </div>
-            </div>
-
-            <!-- 告警中心 (新增) -->
-            <div class="card mt-16" id="alertsPanelCard" style="border-left:4px solid #d97706;">
-                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
-                    <h3>⚠️ 告警中心</h3>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span class="tag tag-red" id="alertCriticalCount">0 Critical</span>
-                        <span class="tag tag-orange" id="alertWarningCount">0 Warning</span>
+            <!-- 执行记录 + 安全机制 左右两列 -->
+            <div class="cols-2 mb-16">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>📜 执行记录</h3>
+                        <select id="historyModeFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-size:12px;" onchange="Monitor.filterHistory()">
+                            <option value="">全部</option>
+                            <option value="pipeline">Pipeline</option>
+                            <option value="db">Database</option>
+                            <option value="import">Import</option>
+                        </select>
+                    </div>
+                    <!-- 骨架屏占位 -->
+                    <div class="card-body" id="historyListSkeleton" style="max-height:180px;overflow-y:auto;">
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:50px;height:10px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
+                            <div class="skeleton skeleton-text" style="width:60px;height:10px;"></div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:50px;height:10px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
+                            <div class="skeleton skeleton-text" style="width:60px;height:10px;"></div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+                            <div class="skeleton skeleton-text" style="width:50px;height:10px;"></div>
+                            <div class="skeleton skeleton-text" style="flex:1;"></div>
+                            <div class="skeleton skeleton-text" style="width:60px;height:10px;"></div>
+                        </div>
+                    </div>
+                    <!-- 真实数据容器 -->
+                    <div class="card-body hidden" id="historyList" style="max-height:180px;overflow-y:auto;"></div>
+                    <div class="empty-state hidden" id="historyEmpty" style="padding:20px;">
+                        <p style="font-size:12px;">暂无执行记录</p>
                     </div>
                 </div>
-                <div class="card-body" id="alertsPanelBody" style="max-height:280px;overflow-y:auto;">
-                    <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">加载中...</div>
+                <div class="card">
+                    <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h3>🔒 安全机制</h3>
+                        <button class="btn-outline btn-sm" onclick="Monitor.loadRollback()">刷新</button>
+                    </div>
+                    <!-- 骨架屏占位 -->
+                    <div class="card-body" id="rollbackPanelBodySkeleton" style="max-height:180px;overflow-y:auto;font-size:12px;">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <div class="skeleton" style="width:36px;height:36px;border-radius:50%;"></div>
+                            <div style="flex:1;">
+                                <div class="skeleton skeleton-text" style="width:70%;"></div>
+                                <div class="skeleton skeleton-text sm" style="margin-top:4px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 真实数据容器 -->
+                    <div class="card-body hidden" id="rollbackPanelBody" style="max-height:180px;overflow-y:auto;font-size:12px;"></div>
                 </div>
             </div>
 
-            <!-- 核心指标卡片 (保留原有，增强布局) -->
-            <div class="phase-grid mt-16" id="monitorCards" style="grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));">
-                <!-- JS填充 -->
-            </div>
-
-            <div class="cols-2 mt-16">
+            <!-- 数据分布图表 -->
+            <div class="cols-2">
                 <div class="card">
                     <div class="card-head"><h3>📈 分类分布</h3></div>
                     <div class="card-body" id="chartCategory"></div>
@@ -451,54 +558,10 @@
                     <div class="card-body" id="chartSalary"></div>
                 </div>
             </div>
-
-            <!-- 系统状态表 (折叠为紧凑模式) -->
-            <div class="card mt-16">
-                <details open>
-                    <summary style="cursor:pointer;font-weight:600;font-size:14px;padding:6px 0;">🔧 系统状态详情</summary>
-                    <div class="card-body">
-                        <table class="data-table" style="width:auto;" id="sysStatusTable">
-                            <tr><th>组件</th><th>状态</th><th>详情</th></tr>
-                        </table>
-                    </div>
-                </details>
-            </div>
-
-            <!-- 监控报告列表 (新增) -->
-            <div class="card mt-16">
-                <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
-                    <h3>📁 监控报告历史</h3>
-                    <span style="font-size:12px;color:var(--text-muted);" id="reportsTotalHint"></span>
-                </div>
-                <div class="card-body" id="reportsPanelBody">
-                    <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px 0;">加载中...</div>
-                </div>
-            </div>
-
-            <!-- 执行历史 (增强版) -->
-            <div class="card mt-16">
-                <div class="card-head">
-                    <h3>📜 最近执行记录</h3>
-                    <select id="historyModeFilter" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-size:12px;" onchange="Monitor.filterHistory()">
-                        <option value="">全部模式</option>
-                        <option value="pipeline">Pipeline</option>
-                        <option value="db">Database</option>
-                        <option value="import">Import</option>
-                    </select>
-                </div>
-                <div class="card-body">
-                    <div id="historyList"></div>
-                    <div class="empty-state hidden" id="historyEmpty">
-                        <span class="icon-big">📭</span>
-                        <p>暂无执行记录</p>
-                        <p class="sub">运行流水线后记录将在此处显示</p>
-                    </div>
-                </div>
-            </div>
         </section>
 
 
-        <!-- ============================================================
+        <!-- ============================================================  
              PAGE 5: 系统配置（动态配置系统）
              ============================================================ -->
         <section class="page" id="page-config">
@@ -511,7 +574,7 @@
                 </div>
 
                 <!-- 配置主体：左侧导航 + 右侧表单 -->
-                <div class="card" style="padding:0;overflow:hidden;">
+                <div class="card mb-16" style="padding:0;overflow:hidden;">
                     <div style="display:flex;min-height:520px;">
 
                         <!-- 左侧分组导航 -->
@@ -541,6 +604,108 @@
                             <div id="cfgStatus" style="margin-top:12px;"></div>
                         </div>
 
+                    </div>
+                </div>
+
+                <!-- 系统状态详情 -->
+                <div class="card">
+                    <div class="card-head" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h3>🔧 系统状态详情</h3>
+                        <button class="btn-outline btn-sm" onclick="Status.load()" title="刷新状态">🔄</button>
+                    </div>
+                    <div class="card-body" style="padding:12px;">
+                        <table class="data-table" style="width:100%;font-size:12px;" id="sysStatusTable">
+                            <tr><th>组件</th><th>状态</th><th>详情</th></tr>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+
+        <!-- ============================================================
+             PAGE: 关键词动态配置 (业务数据 - 从岗位数据自动提取)
+             ============================================================ -->
+        <section class="page" id="page-keywords">
+            <div style="margin:0 auto;max-width:900px;">
+
+                <!-- 页面标题 -->
+                <div class="card mb-16" style="border:none;background:linear-gradient(135deg,#059669 0%,#10b981 100%);color:#fff;">
+                    <h2 style="color:#fff;font-size:22px;margin-bottom:6px;">🔑 关键词自动提取</h2>
+                    <p style="opacity:0.9;font-size:14px;">从岗位数据自动提取搜索关键词和品牌关键词</p>
+                    <p style="opacity:0.7;font-size:12px;margin-top:8px;">关键词来源：岗位标题、地区、公司名称、来源域名等</p>
+                </div>
+
+                <!-- 数据来源说明 -->
+                <div class="card mb-16" style="background:#f0fdf4;border:1px solid #bbf7d0;">
+                    <div class="card-body" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:200px;">
+                            <p style="font-size:14px;color:#166534;margin-bottom:4px;">
+                                <strong>数据来源说明：</strong>
+                            </p>
+                            <ul style="font-size:13px;color:#166534;margin:0;padding-left:18px;">
+                                <li>搜索关键词：从岗位标题提取职位类型 + 地区组合</li>
+                                <li>品牌关键词：从岗位来源 URL 提取域名 + 公司名</li>
+                            </ul>
+                        </div>
+                        <button class="btn-primary" onclick="Keywords.refresh()">
+                            🔄 重新提取
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 搜索关键词配置 -->
+                <div class="card mb-16">
+                    <div class="card-head">
+                        <h3>🔍 搜索关键词库</h3>
+                        <span class="badge badge-green" id="searchQueriesCount">0 个</span>
+                    </div>
+                    <div class="card-body">
+                        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px;">
+                            用于 AI 平台搜索的关键词。自动从岗位的地区+职位类型组合提取。
+                        </p>
+                        <div id="searchQueriesEditor" style="min-height:120px;max-height:300px;overflow-y:auto;">
+                            <!-- JS 渲染关键词标签 -->
+                        </div>
+                        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <input type="text" id="newSearchQuery" class="input" placeholder="手动添加搜索关键词" style="flex:1;min-width:200px;" onkeydown="if(event.key==='Enter')Keywords.addSearchQuery()">
+                            <button class="btn-outline btn-sm" onclick="Keywords.addSearchQuery()">+ 追加</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 品牌关键词配置 -->
+                <div class="card mb-16">
+                    <div class="card-head">
+                        <h3>👑 品牌关键词</h3>
+                        <span class="badge badge-orange" id="brandKeywordsCount">0 个</span>
+                    </div>
+                    <div class="card-body">
+                        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:16px;">
+                            检测 AI 引用结果中是否包含你的品牌信息。自动从岗位来源域名和公司名提取。
+                        </p>
+                        <div id="brandKeywordsEditor" style="min-height:120px;max-height:300px;overflow-y:auto;">
+                            <!-- JS 渲染品牌关键词标签 -->
+                        </div>
+                        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <input type="text" id="newBrandKeyword" class="input" placeholder="手动添加品牌关键词" style="flex:1;min-width:200px;" onkeydown="if(event.key==='Enter')Keywords.addBrandKeyword()">
+                            <button class="btn-outline btn-sm" onclick="Keywords.addBrandKeyword()">+ 追加</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 保存按钮 -->
+                <div class="card" style="background:var(--bg-secondary);border:1px dashed var(--border-color);">
+                    <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+                        <div>
+                            <p style="font-size:14px;color:var(--text-secondary);">
+                                <span id="keywordsStatus">正在加载...</span>
+                            </p>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn-primary" onclick="Keywords.save()">💾 保存配置</button>
+                        </div>
                     </div>
                 </div>
 
