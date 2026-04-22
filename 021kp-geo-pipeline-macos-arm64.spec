@@ -5,7 +5,7 @@ a = Analysis(
     ['src/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('config', 'config'), ('data', 'data')],
+    datas=[('config', 'config'), ('data', 'data'), ('static', 'static')],
     hiddenimports=[
         'compliance_gate', 'intent_router', 'content_factory', 'auth_signaler',
         'dist_monitor', 'database_connector', 'database_backend',

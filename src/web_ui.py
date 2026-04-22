@@ -97,9 +97,15 @@ class WebUIHandler:
             geo_app: GEO 应用实例引用 (预留扩展)
         """
         self.geo_app = geo_app
-        
-        # static/ 目录路径: 与 src/ 同级的 static/
-        self._static_dir = Path(__file__).parent.parent / 'static'
+
+        # static/ 目录路径: PyInstaller onefile 模式下从 _MEIPASS 提取
+        import sys
+        if getattr(sys, 'frozen', False):
+            # running as compiled executable
+            self._static_dir = Path(sys._MEIPASS) / 'static'
+        else:
+            # running from source
+            self._static_dir = Path(__file__).parent.parent / 'static'
         
         # 统一配置管理器 (替代散落的 os.getenv 调用)
         try:

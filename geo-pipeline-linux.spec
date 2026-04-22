@@ -10,8 +10,9 @@ a = Analysis(
     pathex=[str(SPECROOT)],
     binaries=[],
     datas=[
-        (str(SPECROOT / 'config'), 'config'),
-        (str(SPECROOT / 'data'), 'data'),
+        ('config', 'config'),
+        ('data', 'data'),
+        ('static', 'static'),
     ],
     hiddenimports=[
         'compliance_gate',
