@@ -617,17 +617,6 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                     content_length = int(self.headers.get('Content-Length', 0))
                     body = self.rfile.read(content_length) if content_length > 0 else b''
                 
-                    # CSV文件上传
-                    if path == '/api/pipeline/upload' and _web_handler:
-                        content_type = self.headers.get('Content-Type', '')
-                        result = _web_handler._api_csv_upload({
-                            'content-type': content_type,
-                            'body': body,
-                            'path': path
-                        })
-                        self._send_response_dict(result)
-                        return
-                    
                     # 执行流水线
                     elif path == '/api/pipeline/run' and _web_handler:
                         result = _web_handler._api_pipeline_run({
@@ -689,6 +678,85 @@ def run_server_mode(port: int = 8080, db_enabled: bool = False, web_ui: bool = T
                         self.wfile.write(body)
                     except Exception:
                         pass  # 连接可能已断开，静默忽略
+
+            def do_POST(self):
+                """POST请求处理器 — 支持CSV上传和API调用"""
+                path = self.path.split('?')[0]
+                try:
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(content_length) if content_length > 0 else b''
+                except Exception:
+                    body = b''
+
+                try:
+                    # CSV文件上传
+                    if path == '/api/pipeline/upload' and _web_handler:
+                        content_type = self.headers.get('Content-Type', '')
+                        result = _web_handler._api_csv_upload({
+                            'content-type': content_type,
+                            'body': body,
+                            'path': path
+                        })
+                        self._send_response_dict(result)
+                        return
+
+                    # 执行流水线
+                    elif path == '/api/pipeline/run' and _web_handler:
+                        data = {}
+                        if body:
+                            try:
+                                data = json.loads(body.decode('utf-8'))
+                            except Exception:
+                                pass
+                        result = _web_handler._api_pipeline_run({
+                            'body': body,
+                            'path': path,
+                            'data': data
+                        })
+                        self._send_response_dict(result)
+                        return
+
+                    # 保存审计记录
+                    elif path.startswith('/api/geo/audit/save') and _web_handler:
+                        content_type = self.headers.get('Content-Type', '')
+                        result = _web_handler._api_save_audit({
+                            'content-type': content_type,
+                            'body': body,
+                            'path': path
+                        })
+                        self._send_response_dict(result)
+                        return
+
+                    # 监控检查
+                    elif path.startswith('/api/monitor/check') and _web_handler:
+                        data = {}
+                        if body:
+                            try:
+                                data = json.loads(body.decode('utf-8'))
+                            except Exception:
+                                pass
+                        result = _web_handler._api_monitor_check({
+                            'body': body,
+                            'path': path,
+                            'data': data
+                        })
+                        self._send_response_dict(result)
+                        return
+
+                    else:
+                        self._send_json({"error": f"Unsupported POST: {path}"}, 501)
+
+                except Exception as e:
+                    logger.error(f"[HTTP] POST {path} 未处理异常: {type(e).__name__}: {e}", exc_info=True)
+                    try:
+                        self.send_response(500)
+                        self.send_header('Content-Type', 'application/json; charset=utf-8')
+                        err_body = json.dumps({"error": "Internal Server Error", "detail": str(e)[:200]}, ensure_ascii=False).encode('utf-8')
+                        self.send_header('Content-Length', str(len(err_body)))
+                        self.end_headers()
+                        self.wfile.write(err_body)
+                    except Exception:
+                        pass
 
             def do_DELETE(self):
                 path = self.path.split('?')[0]
