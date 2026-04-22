@@ -755,8 +755,8 @@ class WebUIHandler:
         })
 
     def _load_jobs_data(self) -> list:
-        """从数据库或最近上传的 CSV 加载岗位数据 (SQLite)"""
-        
+        """从数据库或 CSV 加载岗位数据 (SQLite)"""
+
         # 1. 优先: 从数据库后端加载
         if self._db:
             try:
@@ -765,17 +765,28 @@ class WebUIHandler:
                     return [j.to_dict() for j in jobs]
             except Exception as e:
                 logger.warning(f"DB后端加载失败，降级到CSV: {e}")
-        
-        # 2. 降级: 从CSV文件加载
+
+        # 2. 降级: 从 CSV 文件加载
         try:
-            upload_dir = Path(__file__).parent.parent / 'uploads'
-            if not upload_dir.exists():
-                return []
-            
-            csv_files = sorted(upload_dir.glob('*.csv'), reverse=True)
+            import sys
+            if getattr(sys, 'frozen', False):
+                base_dir = Path(sys._MEIPASS)
+            else:
+                base_dir = Path(__file__).parent.parent
+
+            # 优先: uploads/ (用户上传的 CSV)
+            upload_dir = base_dir / 'uploads'
+            csv_files = sorted(upload_dir.glob('*.csv'), reverse=True) if upload_dir.exists() else []
+
+            # 兜底: data/ (打包时自带的示例数据)
+            if not csv_files:
+                sample_csv = base_dir / 'data' / 'sample_jobs.csv'
+                if sample_csv.exists():
+                    csv_files = [sample_csv]
+
             if not csv_files:
                 return []
-            
+
             from intent_router import load_jobs_from_csv
             return load_jobs_from_csv(str(csv_files[0]))
         except Exception:
